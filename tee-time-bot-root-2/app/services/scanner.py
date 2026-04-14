@@ -368,7 +368,10 @@ async def _log_search(db, course_id: str, platform: str, status: str,
 
 def _get_search_dates() -> list[str]:
     today = datetime.now().date()
-    return [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0, 14)]
+    all_dates = [(today + timedelta(days=i)) for i in range(0, 14)]
+    weekends = [d.strftime("%Y-%m-%d") for d in all_dates if d.weekday() in (4, 5, 6)]
+    weekdays = [d.strftime("%Y-%m-%d") for d in all_dates if d.weekday() not in (4, 5, 6)]
+    return weekends + weekdays
 
 
 def is_surge_mode() -> bool:
