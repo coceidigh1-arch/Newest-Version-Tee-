@@ -15,6 +15,12 @@ from app.scrapers.golfnow_v2 import search_golfnow_facility
 from app.scrapers.chronogolf import search_chronogolf
 from app.scrapers.foreup import search_foreup
 from app.scrapers.direct import search_direct
+from app.scrapers.teeitup import search_teeitup
+from app.scrapers.cps_golf import search_cps_golf
+from app.scrapers.whoosh import search_whoosh
+from app.scrapers.golfback import search_golfback
+from app.scrapers.ezlinks import search_ezlinks
+from app.scrapers.proshop_teetimes import search_proshop
 from app.services.scoring import score_tee_time, determine_action, generate_slot_id
 from app.services.notifications import send_alert
 from app.services.weather import get_forecast
@@ -168,6 +174,108 @@ async def run_scan_cycle():
                     except Exception as exc:
                         logger.error("Error scanning %s via direct: %s", course_id, exc)
                         await _log_search(db, course_id, "direct", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- TeeItUp (Broken Arrow, Hilldale, St. Andrews) ---
+                for course in get_courses_by_platform("teeitup"):
+                    try:
+                        slots = await search_teeitup(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "teeitup", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via TeeItUp: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "teeitup", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- EZLinks (Glen Club, Bridges of Poplar Creek, Links at Carillon) ---
+                for course in get_courses_by_platform("ezlinks"):
+                    try:
+                        slots = await search_ezlinks(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "ezlinks", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via EZLinks: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "ezlinks", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- CPS Golf (Mistwood) ---
+                for course in get_courses_by_platform("cps_golf"):
+                    try:
+                        slots = await search_cps_golf(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "cps_golf", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via CPS Golf: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "cps_golf", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- Whoosh (Cantigny) ---
+                for course in get_courses_by_platform("whoosh"):
+                    try:
+                        slots = await search_whoosh(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "whoosh", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via Whoosh: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "whoosh", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- GolfBack (Prairie Landing) ---
+                for course in get_courses_by_platform("golfback"):
+                    try:
+                        slots = await search_golfback(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "golfback", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via GolfBack: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "golfback", "error", 0, 0, started_at, str(exc))
+                    await asyncio.sleep(3)
+                await db.commit()
+
+                # --- ProShop TeeTimes (Bowes Creek, Highlands of Elgin) ---
+                for course in get_courses_by_platform("proshop_teetimes"):
+                    try:
+                        slots = await search_proshop(course["id"], date)
+                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        all_new_slots.extend(new)
+                        scan_summary["courses"] += 1
+                        scan_summary["slots_found"] += len(slots)
+                        scan_summary["new_slots"] += len(new)
+                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                        await _log_search(db, course["id"], "proshop_teetimes", "success", len(slots), len(new), started_at)
+                    except Exception as exc:
+                        logger.error("Error scanning %s via ProShop: %s", course["id"], exc)
+                        await _log_search(db, course["id"], "proshop_teetimes", "error", 0, 0, started_at, str(exc))
                     await asyncio.sleep(3)
                 await db.commit()
 
