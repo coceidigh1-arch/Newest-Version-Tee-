@@ -306,7 +306,7 @@ async def list_slots(
     """List discovered tee time slots with optional filters."""
     db = await get_db()
     try:
-        query = "SELECT * FROM seen_slots WHERE score >= ? AND disappeared_at IS NULL AND date >= date('now')"
+        query = "SELECT * FROM seen_slots WHERE score >= ? AND date >= date('now')"
         params = [min_score]
 
         if course_id:
