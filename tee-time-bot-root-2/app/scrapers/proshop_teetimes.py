@@ -1,7 +1,7 @@
 """
-ProShop TeeTimes Scraper — Playwright DOM extraction
-Covers: Bowes Creek CC, Highlands of Elgin
-ProShop TeeTimes uses classic ASP.NET behind Cloudflare. Requires Playwright.
+EZLinks Scraper — Playwright DOM extraction
+Covers: The Glen Club, Bridges of Poplar Creek CC, Links at Carillon
+EZLinks is a SPA behind Cloudflare. Requires Playwright for rendering.
 """
 
 import asyncio
@@ -15,30 +15,27 @@ from app.scrapers.golfnow_v2 import _get_browser, _create_stealth_context
 
 logger = logging.getLogger(__name__)
 
-PROSHOP_COURSES = {
-    "bowes_creek": {"course_id": "94"},
-    "highlands_elgin": {"course_id": "95"},
+EZLINKS_COURSES = {
+    "glen_club": {
+        "base_url": "https://theglenclub.ezlinksgolf.com/index.html#/search",
+    },
+    "bridges_poplar": {
+        "base_url": "https://poplarcreekccpp.ezlinksgolf.com/index.html#/search",
+    },
+    "links_carillon": {
+        "base_url": "https://carillon.ezlinksgolf.com/index.html#/search",
+    },
 }
 
 
-def _build_url(course_num: str, date: str, players: int) -> str:
-    # ProShop TeeTimes uses ASP.NET URL with date parameter
-    # Format: MM/DD/YYYY
-    dt = datetime.strptime(date, "%Y-%m-%d")
-    formatted = dt.strftime("%m/%d/%Y")
-    return (
-        f"https://booking.proshopteetimes.com/search-results.aspx"
-        f"?CourseID={course_num}&Date={formatted}&Players={players}&Holes=18"
-    )
-
-
-async def search_proshop(course_id: str, date: str, players: int = 4) -> list[dict]:
-    """Search a ProShop TeeTimes-powered course for tee times."""
-    config = PROSHOP_COURSES.get(course_id)
+async def search_ezlinks(course_id: str, date: str, players: int = 4) -> list[dict]:
+    """Search an EZLinks-powered course for tee times."""
+    config = EZLINKS_COURSES.get(course_id)
     if not config:
         return []
 
-    url = _build_url(config["course_id"], date, players)
+    # EZLinks uses hash-based routing with date params
+    url = f"{config['base_url']}?date={date}&players={players}&holes=18"
     slots = []
     context = None
 
@@ -75,16 +72,16 @@ async def search_proshop(course_id: str, date: str, players: int = 4) -> list[di
                     "players_available": raw.get("players", 4),
                     "walk_ride": "ride" if course.get("walk_ride") == "ride_included" else "unknown",
                     "booking_url": course.get("booking_url", ""),
-                    "source": "proshop_teetimes",
+                    "source": "ezlinks",
                     "is_new": True,
                 })
 
-        logger.info("ProShop: %s on %s -> %d slots", course_id, date, len(slots))
+        logger.info("EZLinks: %s on %s -> %d slots", course_id, date, len(slots))
 
     except PlaywrightTimeout:
-        logger.error("ProShop timeout for %s on %s", course_id, date)
+        logger.error("EZLinks timeout for %s on %s", course_id, date)
     except Exception as e:
-        logger.error("ProShop error for %s: %s", course_id, str(e))
+        logger.error("EZLinks error for %s: %s", course_id, str(e))
     finally:
         if context:
             try:
@@ -105,8 +102,8 @@ _EXTRACT_JS = r"""() => {
         '[class*="teetime"]', '[class*="tee-time"]', '[class*="tee_time"]',
         '[class*="slot"]', '[class*="booking"]', '[class*="available"]',
         '[class*="time-slot"]', '[class*="timeslot"]', '[class*="reservation"]',
-        '[class*="search-result"]', '[class*="teesheet"]',
-        '.card', '.result', 'tr', 'li', 'article', 'td'
+        '[class*="search-result"]', '[class*="rate"]',
+        '.card', '.result', 'tr', 'li', 'article'
     ];
 
     for (const selector of selectors) {
