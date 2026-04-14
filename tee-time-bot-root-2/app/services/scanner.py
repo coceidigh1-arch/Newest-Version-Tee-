@@ -85,10 +85,9 @@ async def run_scan_cycle():
             rows = await db.execute_fetchall("SELECT * FROM users WHERE notification_enabled = 1")
             users = [_row_to_dict(r) for r in rows]
             if not users:
-                logger.info("No active users configured. Skipping scan.")
-                return
+                logger.info("No active users configured. Scanning without alerts.")
 
-            prefs_by_user, suppressions = await _load_user_context(db, users)
+            prefs_by_user, suppressions = await _load_user_context(db, users) if users else ({}, [])
             dates_to_search = _get_search_dates()
             all_new_slots: list[dict] = []
             scan_summary = {"courses": 0, "slots_found": 0, "new_slots": 0, "alerts_sent": 0}
