@@ -164,6 +164,7 @@ async def mark_disappeared_slots():
             """UPDATE seen_slots SET disappeared_at = datetime('now')
                WHERE disappeared_at IS NULL
                  AND last_seen_at < datetime('now', ?)
+                 AND date <= date('now')
                  AND action NOT IN ('BOOKED', 'CONFIRMED')""",
             (f"-{settings.SLOT_STALE_MINUTES} minutes",),
         )
