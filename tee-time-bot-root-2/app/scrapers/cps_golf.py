@@ -29,8 +29,8 @@ async def search_cps_golf(course_id: str, date: str, players: int = 4) -> list[d
     if not config:
         return []
 
-    # CPS Golf uses date format in URL params
-    url = f"{config['base_url']}?{config['params']}&selectedDate={date}"
+    # CPS Golf ignores URL date params — must click calendar dates
+    url = f"{config['base_url']}?{config['params']}"
     slots = []
     context = None
 
@@ -46,6 +46,49 @@ async def search_cps_golf(course_id: str, date: str, players: int = 4) -> list[d
 
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(random.randint(8000, 12000))
+
+        # Navigate to the correct date by clicking the calendar
+        target = datetime.strptime(date, "%Y-%m-%d")
+        today = datetime.now()
+
+        # If target month is ahead of current, click forward arrow
+        months_ahead = (target.year - today.year) * 12 + (target.month - today.month)
+        for _ in range(months_ahead):
+            try:
+                await page.click('[class*="calendar"] [class*="next"], [class*="right-arrow"], button:has-text("›")', timeout=3000)
+                await page.wait_for_timeout(1000)
+            except Exception:
+                break
+
+        # Click the target day number in the calendar
+        day_str = str(target.day)
+        try:
+            # Find calendar day cells and click the matching one
+            await page.evaluate(f"""() => {{
+                const cells = document.querySelectorAll('[class*="calendar"] td, [class*="calendar"] [class*="day"], [class*="date-cell"]');
+                for (const cell of cells) {{
+                    const text = cell.innerText.trim();
+                    if (text === '{day_str}' && !cell.classList.contains('disabled') && !cell.classList.contains('past')) {{
+                        cell.click();
+                        return true;
+                    }}
+                }}
+                // Fallback: find any clickable element with just the day number
+                const allEls = document.querySelectorAll('span, div, td, a, button');
+                for (const el of allEls) {{
+                    if (el.innerText.trim() === '{day_str}' && el.offsetParent !== null) {{
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width < 60 && rect.height < 60 && rect.width > 10) {{
+                            el.click();
+                            return true;
+                        }}
+                    }}
+                }}
+                return false;
+            }}""")
+            await page.wait_for_timeout(5000)
+        except Exception as e:
+            logger.warning("CPS Golf: could not click date %s: %s", date, e)
 
         # Scroll to trigger lazy loading
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -90,38 +133,37 @@ async def search_cps_golf(course_id: str, date: str, players: int = 4) -> list[d
 
 _EXTRACT_JS = r"""() => {
     const slots = [];
-    const allText = document.body.innerText;
-    const timePattern = /(\d{1,2}:\d{2}\s*(?:AM|PM))/gi;
-    const pricePattern = /\$(\d+(?:\.\d{2})?)/g;
 
-    const selectors = [
-        '[class*="teetime"]', '[class*="tee-time"]', '[class*="tee_time"]',
-        '[class*="slot"]', '[class*="booking"]', '[class*="available"]',
-        '[class*="time-slot"]', '[class*="timeslot"]', '[class*="reservation"]',
-        '[class*="search-result"]', '[class*="teesheet"]',
-        '.card', '.result', 'tr', 'li', 'article'
-    ];
-
-    for (const selector of selectors) {
-        const elements = document.querySelectorAll(selector);
-        for (const el of elements) {
-            const text = el.innerText;
-            if (!text || text.length > 500 || text.length < 5) continue;
-            const tm = text.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
-            const pm = text.match(/\$(\d+(?:\.\d{2})?)/);
-            const plm = text.match(/(\d)\s*(?:player|golfer|spot|opening|avail)/i);
-            if (tm) {
-                slots.push({
-                    time: tm[1],
-                    price: pm ? parseFloat(pm[1]) : 0,
-                    players: plm ? parseInt(plm[1]) : 4,
-                });
-            }
+    // CPS Golf uses teetimeitem-container__item elements
+    // Time is split as "2:50\nP\nM" so we normalize newlines to spaces
+    const teeItems = document.querySelectorAll('[class*="teetimeitem-container"]');
+    
+    for (const el of teeItems) {
+        const text = el.innerText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!text || text.length < 5) continue;
+        
+        // Match time like "2:50 P M" or "10:30 A M" (CPS splits P and M)
+        const tm = text.match(/(\d{1,2}:\d{2})\s*([AP])\s*M/i);
+        const pm = text.match(/\$(\d+(?:\.\d{2})?)/);
+        // Match golfers like "1 - 4 GOLFERS" or "1 GOLFERS"
+        const plm = text.match(/(\d)\s*(?:-\s*(\d))?\s*GOLFER/i);
+        
+        if (tm) {
+            const timeStr = tm[1] + ' ' + tm[2] + 'M';
+            slots.push({
+                time: timeStr,
+                price: pm ? parseFloat(pm[1]) : 0,
+                players: plm && plm[2] ? parseInt(plm[2]) : (plm ? parseInt(plm[1]) : 4),
+            });
         }
     }
 
+    // Fallback: try generic extraction with normalized text
     if (slots.length === 0) {
-        const times = [...allText.matchAll(timePattern)].map(m => m[1]);
+        const allText = document.body.innerText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+        const timePattern = /(\d{1,2}:\d{2})\s*([AP])\s*M/gi;
+        const pricePattern = /\$(\d+(?:\.\d{2})?)/g;
+        const times = [...allText.matchAll(timePattern)].map(m => m[1] + ' ' + m[2] + 'M');
         const prices = [...allText.matchAll(pricePattern)].map(m => parseFloat(m[1]));
         for (let i = 0; i < times.length; i++) {
             const hour = parseInt(times[i].split(':')[0]);
