@@ -785,6 +785,156 @@ async def get_weather(dates: str = Query("")):
     return {"forecasts": forecasts}
 
 
+# ===== WEB ALERTS API (browser-based tee time alerts) =====
+
+class WebAlertCreate(BaseModel):
+    session_id: str
+    course_id: str
+    earliest_time: str = "05:00"
+    latest_time: str = "14:00"
+    date_from: str | None = None
+    date_to: str | None = None
+    min_players: int = 1
+
+
+@app.post("/api/web-alerts")
+async def create_web_alert(req: WebAlertCreate):
+    """Create a web-based tee time alert."""
+    if not req.session_id or len(req.session_id) > 64:
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    if req.course_id not in COURSES:
+        raise HTTPException(status_code=400, detail="Unknown course")
+
+    db = await get_db()
+    try:
+        count_row = await db.execute_fetchone(
+            "SELECT COUNT(*) as cnt FROM web_alerts WHERE session_id = ? AND status = 'ACTIVE'",
+            (req.session_id,),
+        )
+        if count_row and count_row["cnt"] >= 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 active alerts per session")
+
+        await db.execute(
+            """INSERT INTO web_alerts
+            (session_id, course_id, earliest_time, latest_time, date_from, date_to, min_players)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (req.session_id, req.course_id, req.earliest_time, req.latest_time,
+             req.date_from, req.date_to, req.min_players),
+        )
+        await db.commit()
+        row = await db.execute_fetchone("SELECT last_insert_rowid() as id")
+        alert_id = row["id"] if row else None
+        course = COURSES.get(req.course_id, {})
+        return {
+            "id": alert_id,
+            "course": course.get("name", req.course_id),
+            "message": f"Alert set for {course.get('name', req.course_id)}",
+        }
+    finally:
+        await db.close()
+
+
+@app.get("/api/web-alerts/{session_id}")
+async def list_web_alerts(session_id: str):
+    """List active web alerts for a session."""
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM web_alerts WHERE session_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC",
+            (session_id,),
+        )
+        alerts = []
+        for r in rows:
+            d = {k: r[k] for k in r.keys()}
+            d["course_name"] = COURSES.get(d["course_id"], {}).get("name", d["course_id"])
+            alerts.append(d)
+        return {"alerts": alerts}
+    finally:
+        await db.close()
+
+
+@app.delete("/api/web-alerts/{alert_id}")
+async def delete_web_alert(alert_id: int, session_id: str = Query(...)):
+    """Deactivate a web alert."""
+    db = await get_db()
+    try:
+        row = await db.execute_fetchone(
+            "SELECT * FROM web_alerts WHERE id = ? AND session_id = ?",
+            (alert_id, session_id),
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        await db.execute(
+            "UPDATE web_alerts SET status = 'DELETED' WHERE id = ?",
+            (alert_id,),
+        )
+        await db.commit()
+        return {"message": "Alert removed"}
+    finally:
+        await db.close()
+
+
+@app.get("/api/web-alerts/check/{session_id}")
+async def check_web_alerts(session_id: str):
+    """Poll for tee time matches against active web alerts."""
+    db = await get_db()
+    try:
+        alerts = await db.execute_fetchall(
+            "SELECT * FROM web_alerts WHERE session_id = ? AND status = 'ACTIVE'",
+            (session_id,),
+        )
+        matches = []
+        for alert in alerts:
+            a = {k: alert[k] for k in alert.keys()}
+            notified = json.loads(a.get("notified_slots") or "[]")
+
+            query = """
+                SELECT * FROM seen_slots
+                WHERE course_id = ?
+                  AND time >= ? AND time <= ?
+                  AND disappeared_at IS NULL
+                  AND date >= date('now')
+                  AND players_available >= ?
+            """
+            params = [a["course_id"], a["earliest_time"], a["latest_time"], a["min_players"]]
+
+            if a.get("date_from"):
+                query += " AND date >= ?"
+                params.append(a["date_from"])
+            if a.get("date_to"):
+                query += " AND date <= ?"
+                params.append(a["date_to"])
+
+            query += " ORDER BY date, time LIMIT 20"
+            rows = await db.execute_fetchall(query, params)
+
+            new_slots = []
+            for r in rows:
+                slot = {k: r[k] for k in r.keys()}
+                if slot["id"] not in notified:
+                    slot["course_name"] = COURSES.get(slot["course_id"], {}).get("name", slot["course_id"])
+                    new_slots.append(slot)
+                    notified.append(slot["id"])
+
+            if new_slots:
+                await db.execute(
+                    "UPDATE web_alerts SET notified_slots = ? WHERE id = ?",
+                    (json.dumps(notified[-100:]), a["id"]),
+                )
+                matches.append({
+                    "alert_id": a["id"],
+                    "course_id": a["course_id"],
+                    "course_name": COURSES.get(a["course_id"], {}).get("name", a["course_id"]),
+                    "slots": new_slots,
+                })
+
+        if matches:
+            await db.commit()
+        return {"matches": matches}
+    finally:
+        await db.close()
+
+
 # ===== ADMIN: Clear stale slot data (run after timezone fix) =====
 
 @app.post("/admin/clear-stale-slots")
