@@ -790,6 +790,7 @@ async def get_weather(dates: str = Query("")):
 class WebAlertCreate(BaseModel):
     session_id: str
     course_id: str
+    email: str = ""
     earliest_time: str = "05:00"
     latest_time: str = "14:00"
     date_from: str | None = None
@@ -816,9 +817,9 @@ async def create_web_alert(req: WebAlertCreate):
 
         await db.execute(
             """INSERT INTO web_alerts
-            (session_id, course_id, earliest_time, latest_time, date_from, date_to, min_players)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (req.session_id, req.course_id, req.earliest_time, req.latest_time,
+            (session_id, course_id, email, earliest_time, latest_time, date_from, date_to, min_players)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (req.session_id, req.course_id, req.email or None, req.earliest_time, req.latest_time,
              req.date_from, req.date_to, req.min_players),
         )
         await db.commit()
@@ -877,6 +878,8 @@ async def delete_web_alert(alert_id: int, session_id: str = Query(...)):
 @app.get("/api/web-alerts/check/{session_id}")
 async def check_web_alerts(session_id: str):
     """Poll for tee time matches against active web alerts."""
+    from app.services.email_alerts import send_alert_email
+
     db = await get_db()
     try:
         alerts = await db.execute_fetchall(
@@ -921,12 +924,17 @@ async def check_web_alerts(session_id: str):
                     "UPDATE web_alerts SET notified_slots = ? WHERE id = ?",
                     (json.dumps(notified[-100:]), a["id"]),
                 )
+                course_name = COURSES.get(a["course_id"], {}).get("name", a["course_id"])
                 matches.append({
                     "alert_id": a["id"],
                     "course_id": a["course_id"],
-                    "course_name": COURSES.get(a["course_id"], {}).get("name", a["course_id"]),
+                    "course_name": course_name,
                     "slots": new_slots,
                 })
+
+                # Send email if configured
+                if a.get("email"):
+                    send_alert_email(a["email"], course_name, new_slots)
 
         if matches:
             await db.commit()
