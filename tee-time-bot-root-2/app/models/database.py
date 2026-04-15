@@ -198,6 +198,24 @@ CREATE INDEX IF NOT EXISTS idx_search_log_course ON search_log(course_id, timest
 CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(booked_by, date);
 CREATE INDEX IF NOT EXISTS idx_rollcalls_status ON roll_calls(status);
 CREATE INDEX IF NOT EXISTS idx_snipe_release ON snipe_requests(release_date, status);
+
+CREATE TABLE IF NOT EXISTS web_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    course_id TEXT NOT NULL,
+    email TEXT,
+    earliest_time TEXT DEFAULT '05:00',
+    latest_time TEXT DEFAULT '14:00',
+    date_from TEXT,
+    date_to TEXT,
+    min_players INTEGER DEFAULT 1,
+    status TEXT DEFAULT 'ACTIVE',
+    notified_slots TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_alerts_session ON web_alerts(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_web_alerts_course ON web_alerts(course_id, status);
 """
 
 
@@ -294,10 +312,34 @@ async def _migration_3_backfill_legacy_alerts(db: aiosqlite.Connection) -> None:
         )
 
 
+async def _migration_4_create_web_alerts(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS web_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            course_id TEXT NOT NULL,
+            email TEXT,
+            earliest_time TEXT DEFAULT '05:00',
+            latest_time TEXT DEFAULT '14:00',
+            date_from TEXT,
+            date_to TEXT,
+            min_players INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'ACTIVE',
+            notified_slots TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_web_alerts_session ON web_alerts(session_id, status);
+        CREATE INDEX IF NOT EXISTS idx_web_alerts_course ON web_alerts(course_id, status);
+        """
+    )
+
+
 MIGRATIONS = [
     _migration_1_add_api_token,
     _migration_2_create_slot_alerts,
     _migration_3_backfill_legacy_alerts,
+    _migration_4_create_web_alerts,
 ]
 
 
