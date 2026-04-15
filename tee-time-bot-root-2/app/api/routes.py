@@ -187,8 +187,8 @@ async def create_user(user: UserCreate, request: Request):
 
 @app.get("/users")
 async def list_users(request: Request):
-    await require_admin_key(request)
     """List all users."""
+    await require_admin_key(request)
     db = await get_db()
     try:
         rows = await db.execute_fetchall("SELECT id, name, email, telegram_chat_id, is_admin, notification_enabled FROM users")
@@ -306,7 +306,7 @@ async def list_slots(
     """List discovered tee time slots with optional filters."""
     db = await get_db()
     try:
-        query = "SELECT * FROM seen_slots WHERE score >= ? AND date >= date('now')"
+        query = "SELECT * FROM seen_slots WHERE score >= ? AND disappeared_at IS NULL AND date >= date('now')"
         params = [min_score]
 
         if course_id:
@@ -364,8 +364,8 @@ async def list_bookings(request: Request, user_id: str | None = None, status: st
 
 @app.get("/rollcalls")
 async def list_roll_calls(request: Request, status: str = "PENDING"):
-    await require_admin_key(request)
     """List active roll calls."""
+    await require_admin_key(request)
     db = await get_db()
     try:
         rows = await db.execute_fetchall(
