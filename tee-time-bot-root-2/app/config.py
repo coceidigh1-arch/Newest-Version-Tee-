@@ -59,6 +59,13 @@ class Settings:
     MAX_AUTOBOOKS_PER_WEEK: int = _get_int("MAX_AUTOBOOKS_PER_WEEK", 2)
     AUTOBOOK_COOLDOWN_HOURS: int = _get_int("AUTOBOOK_COOLDOWN_HOURS", 24)
 
+    # Email (SMTP)
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_PORT: int = _get_int("SMTP_PORT", 587)
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+
     # App
     APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT: int = _get_int("APP_PORT", 8000)
