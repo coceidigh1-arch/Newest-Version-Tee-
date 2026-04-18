@@ -215,6 +215,103 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("function rNow", body)
         self.assertIn("fetchCourseSlots", body)
 
+    async def test_dispatcher_returns_unsupported_for_ezlinks(self):
+        """Before this change, ezlinks/teeitup/whoosh/proshop_teetimes/cps_golf/golfback
+        courses fell through the scanner's per-platform loops and silently returned
+        nothing. The new dispatcher reports UNSUPPORTED so the UI can show it."""
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+        # bridges_poplar is platform=ezlinks, which has no scraper
+        slots, status, err = await dispatch_scan("bridges_poplar", "2026-04-20")
+        self.assertEqual(slots, [])
+        self.assertEqual(status, ScanStatus.UNSUPPORTED)
+        self.assertIn("ezlinks", err)
+
+    async def test_dispatcher_unknown_course_is_config_missing(self):
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+        slots, status, err = await dispatch_scan("not-a-course", "2026-04-20")
+        self.assertEqual(status, ScanStatus.CONFIG_MISSING)
+
+    async def test_dispatcher_returns_ok_when_scraper_returns_slots(self):
+        """Path-level test: the dispatcher should pass through slots and mark
+        the scan OK when the scraper returns results."""
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+        fake_slots = [{"course_id": "bolingbrook", "date": "2026-04-20", "time": "07:00"}]
+        with patch("app.services.scrape_dispatch.search_golfnow_facility",
+                   new=AsyncMock(return_value=fake_slots)):
+            slots, status, err = await dispatch_scan("bolingbrook", "2026-04-20")
+        self.assertEqual(status, ScanStatus.OK)
+        self.assertEqual(slots, fake_slots)
+        self.assertIsNone(err)
+
+    async def test_dispatcher_converts_scraper_exception_to_error(self):
+        """When a scraper raises, the dispatcher must catch it and report
+        ERROR — not propagate and crash the scan cycle."""
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+        with patch("app.services.scrape_dispatch.search_golfnow_facility",
+                   new=AsyncMock(side_effect=RuntimeError("boom"))):
+            slots, status, err = await dispatch_scan("bolingbrook", "2026-04-20")
+        self.assertEqual(status, ScanStatus.ERROR)
+        self.assertEqual(slots, [])
+        self.assertIn("boom", err)
+
+    async def test_course_week_surfaces_scan_status_per_day(self):
+        """The /api/course/{id}/week endpoint must distinguish a day with no
+        availability from a day where the scanner failed. Previously both
+        looked identical to the UI."""
+        from datetime import datetime, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Chicago")
+        except Exception:
+            import pytz
+            tz = pytz.timezone("America/Chicago")
+        today = datetime.now(tz).date()
+        d0 = today.strftime("%Y-%m-%d")
+        d1 = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+        d2 = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+
+        db = await get_db()
+        try:
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s1', 'bridges_poplar', ?, '07:00', 55, 'https://x/1')",
+                (d0,),
+            )
+            # d0: had a successful scan
+            await db.execute(
+                "INSERT INTO search_log (course_id, platform, status, slots_found, new_slots, duration_ms, search_date) "
+                "VALUES ('bridges_poplar', 'ezlinks', 'ok', 1, 1, 800, ?)",
+                (d0,),
+            )
+            # d1: unsupported platform (no scan possible)
+            await db.execute(
+                "INSERT INTO search_log (course_id, platform, status, slots_found, new_slots, duration_ms, search_date, error_message) "
+                "VALUES ('bridges_poplar', 'ezlinks', 'unsupported', 0, 0, 0, ?, 'no scraper')",
+                (d1,),
+            )
+            # d2: scanner errored
+            await db.execute(
+                "INSERT INTO search_log (course_id, platform, status, slots_found, new_slots, duration_ms, search_date, error_message) "
+                "VALUES ('bridges_poplar', 'ezlinks', 'error', 0, 0, 500, ?, 'timeout')",
+                (d2,),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/course/bridges_poplar/week")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        by_date = {d["date"]: d for d in body["days"]}
+        self.assertEqual(by_date[d0]["scan_status"], "ok")
+        self.assertEqual(by_date[d0]["slot_count"], 1)
+        self.assertEqual(by_date[d1]["scan_status"], "unsupported")
+        self.assertEqual(by_date[d1]["scan_error"], "no scraper")
+        self.assertEqual(by_date[d2]["scan_status"], "error")
+        # course_platform is surfaced so the UI can say "ezlinks isn't supported"
+        self.assertEqual(body["course_platform"], "ezlinks")
+
     async def test_course_week_rejects_out_of_range_days(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r0 = await client.get("/api/course/bolingbrook/week?days=0")

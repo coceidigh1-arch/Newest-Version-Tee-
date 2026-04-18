@@ -10,20 +10,11 @@ import logging
 from datetime import datetime, timedelta
 
 from app.models.database import get_db
-from app.models.courses import COURSES, get_courses_by_platform
-from app.scrapers.golfnow_v2 import search_golfnow_facility
-from app.scrapers.chronogolf import search_chronogolf
-from app.scrapers.foreup import search_foreup
-from app.scrapers.direct import search_direct
-from app.scrapers.teeitup import search_teeitup
-from app.scrapers.cps_golf import search_cps_golf
-from app.scrapers.whoosh import search_whoosh
-from app.scrapers.golfback import search_golfback
-from app.scrapers.ezlinks import search_ezlinks
-from app.scrapers.proshop_teetimes import search_proshop
+from app.models.courses import COURSES
 from app.services.scoring import score_tee_time, determine_action, generate_slot_id
 from app.services.notifications import send_alert
 from app.services.weather import get_forecast
+from app.services.scrape_dispatch import dispatch_scan, ScanStatus
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -91,192 +82,67 @@ async def run_scan_cycle():
             rows = await db.execute_fetchall("SELECT * FROM users WHERE notification_enabled = 1")
             users = [_row_to_dict(r) for r in rows]
             if not users:
-                logger.info("No active users configured. Scanning without alerts.")
+                logger.info("No active users configured. Skipping scan.")
+                return
 
-            prefs_by_user, suppressions = await _load_user_context(db, users) if users else ({}, [])
+            prefs_by_user, suppressions = await _load_user_context(db, users)
             dates_to_search = _get_search_dates()
             all_new_slots: list[dict] = []
-            scan_summary = {"courses": 0, "slots_found": 0, "new_slots": 0, "alerts_sent": 0}
+            scan_summary = {
+                "courses": 0, "slots_found": 0, "new_slots": 0, "alerts_sent": 0,
+                "ok": 0, "empty": 0, "unsupported": 0, "error": 0, "config_missing": 0, "skipped": 0,
+            }
+
+            # Per-platform polite delay between consecutive scans. golfnow is
+            # aggressive about rate limiting; the others are less touchy.
+            PLATFORM_DELAYS = {"golfnow": 3.0, "chronogolf": 2.0, "foreup": 1.5, "direct": 2.0}
 
             for date in dates_to_search:
                 weather = await get_forecast(date)
+                skip_reason = None
                 if weather and weather.get("is_bad_weather"):
-                    logger.info("Skipping %s — bad weather: %s", date, weather.get("summary"))
-                    continue
+                    skip_reason = f"bad weather: {weather.get('summary')}"
+                    logger.info("Skipping %s — %s", date, skip_reason)
 
-                # Fast scrapers first
-                for course in get_courses_by_platform("chronogolf"):
-                    try:
-                        slots = await search_chronogolf(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "chronogolf", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via Chronogolf: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "chronogolf", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(1)
-                await db.commit()
+                for course_id, course in COURSES.items():
+                    platform = course.get("platform", "unknown")
 
-                for course in get_courses_by_platform("foreup"):
-                    try:
-                        slots = await search_foreup(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "foreup", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via ForeUP: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "foreup", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(1)
-                await db.commit()
-
-                for course in get_courses_by_platform("golfnow"):
-                    fid = course.get("golfnow_facility_id")
-                    if not fid:
+                    if skip_reason:
+                        await _log_search(
+                            db, course_id, platform, ScanStatus.SKIPPED,
+                            0, 0, started_at, skip_reason, search_date=date,
+                        )
+                        scan_summary["skipped"] += 1
                         continue
-                    try:
-                        slots = await search_golfnow_facility(fid, course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "golfnow", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "golfnow", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
 
-                direct_courses = [
-                    cid for cid, c in COURSES.items()
-                    if (c.get("platform") == "golfnow" and not c.get("golfnow_facility_id"))
-                    or c.get("platform") == "custom"
-                ]
-                for course_id in direct_courses:
-                    try:
-                        slots = await search_direct(course_id, date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course_id, "direct", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via direct: %s", course_id, exc)
-                        await _log_search(db, course_id, "direct", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
+                    slots, status, err = await dispatch_scan(course_id, date)
+                    scan_summary["courses"] += 1
+                    scan_summary[status] = scan_summary.get(status, 0) + 1
 
-                # --- TeeItUp (Broken Arrow, Hilldale, St. Andrews) ---
-                for course in get_courses_by_platform("teeitup"):
-                    try:
-                        slots = await search_teeitup(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                    new: list[dict] = []
+                    if slots:
+                        try:
+                            new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
+                        except Exception as exc:
+                            logger.exception("_process_slots failed for %s/%s", course_id, date)
+                            status = ScanStatus.ERROR
+                            err = f"_process_slots: {exc}"
                         all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
                         scan_summary["slots_found"] += len(slots)
                         scan_summary["new_slots"] += len(new)
                         scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "teeitup", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via TeeItUp: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "teeitup", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
 
-                # --- EZLinks (Glen Club, Bridges of Poplar Creek, Links at Carillon) ---
-                for course in get_courses_by_platform("ezlinks"):
-                    try:
-                        slots = await search_ezlinks(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "ezlinks", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via EZLinks: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "ezlinks", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
+                    await _log_search(
+                        db, course_id, platform, status,
+                        len(slots), len(new), started_at, err, search_date=date,
+                    )
 
-                # --- CPS Golf (Mistwood) ---
-                for course in get_courses_by_platform("cps_golf"):
-                    try:
-                        slots = await search_cps_golf(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "cps_golf", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via CPS Golf: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "cps_golf", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
+                    # Rate-limit polite pause, but only for platforms that
+                    # actually hit the network. UNSUPPORTED/CONFIG_MISSING are
+                    # instant; no need to throttle them.
+                    if status in (ScanStatus.OK, ScanStatus.EMPTY, ScanStatus.ERROR):
+                        await asyncio.sleep(PLATFORM_DELAYS.get(platform, 1.0))
 
-                # --- Whoosh (Cantigny) ---
-                for course in get_courses_by_platform("whoosh"):
-                    try:
-                        slots = await search_whoosh(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "whoosh", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via Whoosh: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "whoosh", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
-
-                # --- GolfBack (Prairie Landing) ---
-                for course in get_courses_by_platform("golfback"):
-                    try:
-                        slots = await search_golfback(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "golfback", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via GolfBack: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "golfback", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
-                await db.commit()
-
-                # --- ProShop TeeTimes (Bowes Creek, Highlands of Elgin) ---
-                for course in get_courses_by_platform("proshop_teetimes"):
-                    try:
-                        slots = await search_proshop(course["id"], date)
-                        new = await _process_slots(db, slots, users, prefs_by_user, suppressions)
-                        all_new_slots.extend(new)
-                        scan_summary["courses"] += 1
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
-                        await _log_search(db, course["id"], "proshop_teetimes", "success", len(slots), len(new), started_at)
-                    except Exception as exc:
-                        logger.error("Error scanning %s via ProShop: %s", course["id"], exc)
-                        await _log_search(db, course["id"], "proshop_teetimes", "error", 0, 0, started_at, str(exc))
-                    await asyncio.sleep(3)
                 await db.commit()
 
             if all_new_slots:
@@ -463,22 +329,23 @@ async def _process_slots(db, slots: list[dict], users: list[dict], prefs_by_user
 
 async def _log_search(db, course_id: str, platform: str, status: str,
                       slots_found: int, new_slots: int, scan_start: datetime,
-                      error: str | None = None):
+                      error: str | None = None, search_date: str | None = None):
+    """Record a single scan attempt. `search_date` is the date the scanner was
+    querying for (distinct from the row's `timestamp`, which is when the scan
+    ran). This lets the /api/course/{id}/week endpoint join against the most
+    recent scan for each specific day."""
     duration_ms = int((datetime.now() - scan_start).total_seconds() * 1000)
     await db.execute(
         """INSERT INTO search_log
-        (course_id, platform, status, slots_found, new_slots, duration_ms, error_message)
-        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (course_id, platform, status, slots_found, new_slots, duration_ms, error),
+        (course_id, platform, status, slots_found, new_slots, duration_ms, error_message, search_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (course_id, platform, status, slots_found, new_slots, duration_ms, error, search_date),
     )
 
 
 def _get_search_dates() -> list[str]:
     today = datetime.now().date()
-    all_dates = [(today + timedelta(days=i)) for i in range(0, 14)]
-    weekends = [d.strftime("%Y-%m-%d") for d in all_dates if d.weekday() in (4, 5, 6)]
-    weekdays = [d.strftime("%Y-%m-%d") for d in all_dates if d.weekday() not in (4, 5, 6)]
-    return weekends + weekdays
+    return [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0, 14)]
 
 
 def is_surge_mode() -> bool:

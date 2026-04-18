@@ -349,12 +349,25 @@ async def _migration_5_create_connect_challenges(db: aiosqlite.Connection) -> No
     )
 
 
+async def _migration_6_search_log_search_date(db: aiosqlite.Connection) -> None:
+    """Add `search_date` to search_log so we can tell which date a scan was
+    querying for (distinct from when the scan ran). Previously the scanner
+    was logging "the scan ran" but not "for which play-date it was looking" —
+    which made it impossible to attribute a per-day scan status back to the
+    course-week endpoint."""
+    await _add_column_if_missing(db, "search_log", "search_date TEXT")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_search_log_course_date ON search_log(course_id, search_date, timestamp)"
+    )
+
+
 MIGRATIONS = [
     _migration_1_add_api_token,
     _migration_2_create_slot_alerts,
     _migration_3_backfill_legacy_alerts,
     _migration_4_create_web_alerts,
     _migration_5_create_connect_challenges,
+    _migration_6_search_log_search_date,
 ]
 
 

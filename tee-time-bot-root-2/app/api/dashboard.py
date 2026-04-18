@@ -485,8 +485,8 @@ var C = {
   schaumburg:{n:"Schaumburg GC",t:"A",d:30,adv:7,s:"golfnow",u:"https://www.golfnow.com/tee-times/facility/727-schaumburg-golf-club/search",avg:85},
   preserve_oak:{n:"Preserve at Oak Meadows",t:"A+",d:25,adv:28,s:"chronogolf",u:"https://www.chronogolf.com/club/oak-meadows-golf-course#teetimes",avg:80},
   glen_club:{n:"The Glen Club",t:"A+",d:20,adv:7,s:"ezlinks",u:"https://theglenclub.ezlinksgolf.com/index.html#/search",avg:180},
-  highlands_elgin:{n:"Highlands of Elgin",t:"A",d:40,adv:7,s:"proshop",u:"https://booking.proshopteetimes.com/SelectPlayers.aspx?CourseID=95",avg:77},
-  bowes_creek:{n:"Bowes Creek CC",t:"A",d:40,adv:7,s:"proshop",u:"https://booking.proshopteetimes.com/SelectPlayers.aspx?CourseID=94",avg:70},
+  highlands_elgin:{n:"Highlands of Elgin",t:"A",d:40,adv:7,s:"proshop_teetimes",u:"https://booking.proshopteetimes.com/SelectPlayers.aspx?CourseID=95",avg:77},
+  bowes_creek:{n:"Bowes Creek CC",t:"A",d:40,adv:7,s:"proshop_teetimes",u:"https://booking.proshopteetimes.com/SelectPlayers.aspx?CourseID=94",avg:70},
   cantigny:{n:"Cantigny Golf",t:"A+",d:30,adv:14,s:"whoosh",u:"https://app.whoosh.io/patron/club/cantigny-golf-course/agenda/golf-course/",avg:120},
   cog_hill_123:{n:"Cog Hill 1-2-3",t:"A",d:28,adv:14,s:"foreup",u:"https://foreupsoftware.com/index.php/booking/a/22487/11#/teetimes",avg:75},
   cog_hill_4:{n:"Cog Hill 4 Dubsdread",t:"A+",d:28,adv:14,s:"foreup",u:"https://foreupsoftware.com/index.php/booking/a/22487/11#/teetimes",avg:110},
@@ -875,6 +875,19 @@ function rNow(){
     if(w.error) return h+emptyState("⚠️","Couldn't load this course",escapeHtml(w.error));
     var total=w.total_slots||0;
     var nDays=(w.days&&w.days.length)||P.courseWeekDays;
+
+    // Surface persistent course-level scan problems as a prominent banner so
+    // users don't mistake scanner failure for genuine lack of availability.
+    if(w.course_scan_state==="unsupported"){
+      h+=banner("warn","🔧","<b>This course isn't scanned yet</b><div style=\"margin-top:4px;color:var(--text-2)\">"+
+        "Our scanner doesn't support <b>"+escapeHtml(w.course_platform||"this provider")+"</b> yet. "+
+        "Availability below reflects only cached data. Use the course's booking link for now.</div>");
+    } else if(w.course_scan_state==="error"){
+      h+=banner("err","⚠️","<b>Scanner is failing for this course</b><div style=\"margin-top:4px;color:var(--text-2)\">"+
+        "We couldn't reach <b>"+escapeHtml(w.course_platform||"the provider")+"</b> on any of the last 7 scan attempts. "+
+        "What's shown below may be stale or incomplete.</div>");
+    }
+
     h+='<div style="font-size:12.5px;color:var(--text-2);margin-bottom:4px">' +
        escapeHtml(w.course_name||P.coursePick) + ' · ' + total + ' open time' + (total!==1?"s":"") +
        ' across the next ' + nDays + ' days</div>';
@@ -882,11 +895,31 @@ function rNow(){
       var ds=day.slots||[];
       h+=dayHeader(day.date,ds.length);
       h+=weatherWarning(day.date);
-      if(!ds.length){
-        h+='<div class="empty-inline">No tee times on this day yet.</div>';
+      if(ds.length){
+        ds.forEach(function(s){h+=slotCard(s)});
         return;
       }
-      ds.forEach(function(s){h+=slotCard(s)});
+      // No slots — explain WHY based on the latest scan attempt for this day
+      // instead of the previous generic "no tee times on this day yet" that
+      // couldn't distinguish "empty" from "scanner broken".
+      var st=day.scan_status||"never_scanned";
+      var msg;
+      if(st==="ok"||st==="empty"||st==="stale_ok"){
+        msg="No tee times available for this day.";
+      } else if(st==="unsupported"){
+        msg="Our scanner doesn't support "+escapeHtml(w.course_platform||"this provider")+" yet — check the course's booking page directly.";
+      } else if(st==="config_missing"){
+        msg="Scan is misconfigured for this course (missing provider ID). Reported to the team.";
+      } else if(st==="error"){
+        msg="Scanner failed for this day. We'll retry on the next cycle.";
+      } else if(st==="skipped"){
+        msg="Scan skipped this day (bad weather forecast).";
+      } else if(st==="never_scanned"){
+        msg="Not scanned yet — the next scan cycle will cover this day.";
+      } else {
+        msg="No tee times available for this day.";
+      }
+      h+='<div class="empty-inline">'+msg+'</div>';
     });
     return h;
   }

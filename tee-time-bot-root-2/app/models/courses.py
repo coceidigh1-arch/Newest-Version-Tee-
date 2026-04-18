@@ -265,6 +265,7 @@ COURSES = {
         "name": "Balmoral Woods Country Club",
         "tier": "A", "platform": "chronogolf",
         "booking_url": "https://www.chronogolf.com/club/5552/widget?medium=widget&source=club",
+        "chronogolf_url": "https://www.chronogolf.com/club/5552",
         "direct_url": "https://www.balmoralwoods.com",
         "golfnow_facility_id": None,
         "phone": "(708) 672-7448",

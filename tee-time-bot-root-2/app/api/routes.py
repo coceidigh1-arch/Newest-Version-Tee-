@@ -809,8 +809,28 @@ async def get_course_week(course_id: str, days: int = 7):
             (course_id, start_date, end_date),
         )
 
+        # Latest scan attempt per (course, date). LEFT JOIN via a subquery-ish
+        # approach: grab all rows in range and reduce in Python. The index on
+        # (course_id, search_date, timestamp) keeps this cheap.
+        scan_rows = await db.execute_fetchall(
+            """SELECT search_date, status, platform, slots_found, error_message, timestamp
+               FROM search_log
+               WHERE course_id = ?
+                 AND search_date IS NOT NULL
+                 AND search_date >= ?
+                 AND search_date <= ?
+               ORDER BY timestamp DESC""",
+            (course_id, start_date, end_date),
+        )
+        latest_scan_by_date: dict[str, dict] = {}
+        for row in scan_rows:
+            d = row["search_date"]
+            if d not in latest_scan_by_date:
+                latest_scan_by_date[d] = dict(row)
+
         course = COURSES[course_id]
         course_name = course.get("name", course_id)
+        course_platform = course.get("platform", "unknown")
         booking_url_fallback = course.get("direct_url") or course.get("booking_url", "")
 
         slots_by_date: dict[str, list[dict]] = {d: [] for d in date_range}
@@ -831,23 +851,56 @@ async def get_course_week(course_id: str, days: int = 7):
             slots_by_date[d].append(slot)
 
         days_out = []
+        any_scan_ok = False
         for d in date_range:
             day_slots = slots_by_date[d]
             day_slots.sort(key=lambda s: (s.get("time") or ""))
+            latest = latest_scan_by_date.get(d)
+            if latest:
+                scan_status = latest["status"]
+                scanned_at = latest["timestamp"]
+                scan_error = latest["error_message"]
+                scan_platform = latest["platform"]
+            else:
+                scan_status = "never_scanned"
+                scanned_at = None
+                scan_error = None
+                scan_platform = course_platform
+            if scan_status == "ok":
+                any_scan_ok = True
+            # If we have slots but the latest status says empty/error, trust
+            # the slots — they're cached from an earlier successful scan.
+            if day_slots and scan_status != "ok":
+                scan_status = "stale_ok"
             days_out.append({
                 "date": d,
                 "slot_count": len(day_slots),
                 "slots": day_slots,
+                "scan_status": scan_status,
+                "scan_platform": scan_platform,
+                "scanned_at": scanned_at,
+                "scan_error": scan_error,
             })
+
+        # Aggregate course-level health for the UI. If every day is one of
+        # unsupported/error/config_missing, that's a persistent problem the
+        # user should know about — not "no availability".
+        healthy_states = {"ok", "empty", "stale_ok"}
+        all_unhealthy = days_out and all(d["scan_status"] not in healthy_states for d in days_out)
+        course_scan_state = "unsupported" if all_unhealthy and all(d["scan_status"] == "unsupported" for d in days_out) else \
+                            "error" if all_unhealthy else \
+                            "ok"
 
         return {
             "course_id": course_id,
             "course_name": course_name,
+            "course_platform": course_platform,
             "timezone": "America/Chicago",
             "start_date": start_date,
             "end_date": end_date,
             "days": days_out,
             "total_slots": sum(d["slot_count"] for d in days_out),
+            "course_scan_state": course_scan_state,
             "generated_at": datetime.now(tz).isoformat(),
         }
     finally:

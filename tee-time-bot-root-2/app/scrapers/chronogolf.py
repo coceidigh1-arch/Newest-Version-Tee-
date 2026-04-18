@@ -9,26 +9,39 @@ import logging
 import re
 import random
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit, urlencode, parse_qsl
+
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 from app.models.courses import COURSES
 from app.scrapers.golfnow_v2 import _get_browser, _create_stealth_context
 
 logger = logging.getLogger(__name__)
 
-CHRONOGOLF_URLS = {
-    "preserve_oak": "https://www.chronogolf.com/club/oak-meadows-golf-course#teetimes",
-    "glen_club": "https://www.chronogolf.com/club/the-glen-club#teetimes",
-    "bolingbrook": "https://www.chronogolf.com/club/bolingbrook-golf-club#teetimes",
-}
+
+def _chronogolf_url_for(course_id: str) -> str | None:
+    """Build a chronogolf URL from course config.
+
+    Preference order: explicit `chronogolf_url` > `booking_url` if it already
+    points at chronogolf. We strip the fragment and any existing query so we
+    can layer our own date/holes/players params cleanly (prevents the ?a=b?c=d
+    malformed URLs we were generating for courses whose booking_url includes
+    a widget query string)."""
+    course = COURSES.get(course_id) or {}
+    candidate = course.get("chronogolf_url") or course.get("booking_url", "")
+    if not candidate or "chronogolf.com" not in candidate:
+        return None
+    parts = urlsplit(candidate)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
 async def search_chronogolf(course_id: str, date: str, players: int = 4) -> list[dict]:
     """Search a Chronogolf-powered course for tee times using Playwright."""
-    base_url = CHRONOGOLF_URLS.get(course_id)
+    base_url = _chronogolf_url_for(course_id)
     if not base_url:
         return []
 
-    url = f"{base_url}?date={date}&nb_holes=18&nb_players={players}"
+    query = urlencode({"date": date, "nb_holes": 18, "nb_players": players})
+    url = f"{base_url}?{query}#teetimes"
     slots = []
     context = None
 
