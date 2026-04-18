@@ -1014,23 +1014,20 @@ async def discover_facility_ids(request: Request):
 
 @app.get("/api/weather")
 async def get_weather(dates: str = Query("")):
-    """Get weather forecasts for comma-separated dates (YYYY-MM-DD)."""
-    from app.services.weather import get_forecast
+    """Get weather forecasts for comma-separated dates (YYYY-MM-DD).
+
+    Delegates to weather.get_forecast_batch which makes a single upstream
+    call for the whole range. Previously this looped per-date (N round
+    trips) with every exception swallowed by `except: pass`, so a single
+    flaky round trip could silently produce {forecasts: {}} — which is
+    exactly what the dashboard was seeing."""
+    from app.services.weather import get_forecast_batch
 
     if not dates:
         return {"forecasts": {}}
 
-    date_list = [d.strip() for d in dates.split(",") if d.strip()]
-    forecasts = {}
-
-    for date_str in date_list[:7]:  # max 7 dates
-        try:
-            forecast = await get_forecast(date_str)
-            if forecast:
-                forecasts[date_str] = forecast
-        except Exception:
-            pass
-
+    date_list = [d.strip() for d in dates.split(",") if d.strip()][:14]
+    forecasts = await get_forecast_batch(date_list)
     return {"forecasts": forecasts}
 
 
