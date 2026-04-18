@@ -195,6 +195,26 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
             response = await client.get("/api/course/not-a-real-course/week")
         self.assertEqual(response.status_code, 404)
 
+    async def test_dashboard_page_renders(self):
+        """Sanity check: /dashboard returns a complete HTML page with the key shell
+        elements. Guards against the single-string template regressing in obvious ways."""
+        from app.api.dashboard import router as dashboard_router
+        # Only mount once — subsequent includes are idempotent for this router.
+        if not any(getattr(r, "path", None) == "/dashboard" for r in app.router.routes):
+            app.include_router(dashboard_router)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/dashboard")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        body = response.text
+        self.assertIn("<!DOCTYPE html>", body)
+        self.assertIn("Tee Time Bot", body)
+        self.assertIn("id=\"app\"", body)
+        # Dark theme + core JS entry points
+        self.assertIn("--bg:#0a0d0c", body)
+        self.assertIn("function rNow", body)
+        self.assertIn("fetchCourseSlots", body)
+
     async def test_course_week_rejects_out_of_range_days(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r0 = await client.get("/api/course/bolingbrook/week?days=0")
