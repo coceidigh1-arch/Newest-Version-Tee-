@@ -17,14 +17,23 @@ from app.scrapers.golfnow_v2 import _get_browser, _create_stealth_context
 logger = logging.getLogger(__name__)
 
 TEEITUP_COURSES = {
-    "broken_arrow": {"slug": "broken-arrow-golf-club", "course_id": "7300"},
-    "hilldale": {"slug": "hilldale-golf-club", "course_id": "4855"},
-    "st_andrews": {"slug": "st-andrews-golf-club-chicago-v2", "course_id": "3299,5038"},
+    # Known sub-course IDs (single-facility courses usually need this)
+    "broken_arrow":   {"slug": "broken-arrow-golf-club",          "course_id": "7300"},
+    "hilldale":       {"slug": "hilldale-golf-club",              "course_id": "4855"},
+    "st_andrews":     {"slug": "st-andrews-golf-club-chicago-v2", "course_id": "3299,5038"},
+    # Slug-only — TeeItUp defaults to the primary course when ?course= is
+    # omitted. If these start reporting empty, discover the ID from a live
+    # session and fill it in.
+    "bartlett_hills": {"slug": "bartlett-hills-golf-course"},
+    "green_garden":   {"slug": "green-garden-country-club-blue-course"},
+    "lost_marsh":     {"slug": "lost-marsh-golf-course"},
 }
 
 
-def _build_url(slug: str, course_id: str, date: str) -> str:
-    return f"https://{slug}.book.teeitup.com/?course={course_id}&date={date}"
+def _build_url(slug: str, course_id: str | None, date: str) -> str:
+    if course_id:
+        return f"https://{slug}.book.teeitup.com/?course={course_id}&date={date}"
+    return f"https://{slug}.book.teeitup.com/?date={date}"
 
 
 async def search_teeitup(course_id: str, date: str, players: int = 4) -> list[dict]:
@@ -33,7 +42,7 @@ async def search_teeitup(course_id: str, date: str, players: int = 4) -> list[di
     if not config:
         return []
 
-    url = _build_url(config["slug"], config["course_id"], date)
+    url = _build_url(config["slug"], config.get("course_id"), date)
     slots = []
     context = None
 

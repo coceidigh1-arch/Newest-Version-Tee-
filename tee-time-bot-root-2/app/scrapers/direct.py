@@ -21,7 +21,7 @@ DIRECT_URLS = {
     "bartlett_hills": "https://www.bartletthillsgc.com",
     "bridges_poplar": "https://www.bridgesofpoplarcreek.com",
     "broken_arrow": "https://www.brokenarrowgolfclub.com",
-    "chevy_chase": "https://www.chevychasegolf.org",
+    "chevy_chase": "https://www.traditionsatchevychase.com/tee-time/",
     "coyote_run": "https://www.coyoterungolf.com",
     "fox_run": "https://www.foxrungolflinks.com",
     "green_garden": "https://www.greengardencc.com",
