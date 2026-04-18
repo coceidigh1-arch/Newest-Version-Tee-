@@ -81,9 +81,13 @@ async def run_scan_cycle():
         try:
             rows = await db.execute_fetchall("SELECT * FROM users WHERE notification_enabled = 1")
             users = [_row_to_dict(r) for r in rows]
+            # We USED to bail out when there were no users — but the scanner
+            # also populates seen_slots, which the dashboard reads regardless
+            # of whether anyone is subscribed for alerts. _process_slots
+            # already no-ops its per-user alert loop when `users` is empty;
+            # slots still get inserted, which is what we want for the UI.
             if not users:
-                logger.info("No active users configured. Skipping scan.")
-                return
+                logger.info("No active users — running in dashboard-only mode (no alerts will be sent).")
 
             prefs_by_user, suppressions = await _load_user_context(db, users)
             dates_to_search = _get_search_dates()
