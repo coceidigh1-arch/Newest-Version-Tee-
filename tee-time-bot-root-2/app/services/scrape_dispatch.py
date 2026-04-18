@@ -25,6 +25,7 @@ from app.scrapers.golfnow_v2 import search_golfnow_facility
 from app.scrapers.chronogolf import search_chronogolf
 from app.scrapers.foreup import search_foreup
 from app.scrapers.direct import search_direct
+from app.scrapers.proshop import search_proshop
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,10 @@ async def _scan_foreup(course_id: str, date: str, players: int) -> list[dict]:
     return await search_foreup(course_id, date, players)
 
 
+async def _scan_proshop(course_id: str, date: str, players: int) -> list[dict]:
+    return await search_proshop(course_id, date, players)
+
+
 # Platforms known to the dispatcher. Missing from this map => UNSUPPORTED.
 # Keep ordering stable (doesn't affect correctness but helps grepping logs).
 _SCRAPERS: dict[str, ScraperFn] = {
@@ -75,6 +80,7 @@ _SCRAPERS: dict[str, ScraperFn] = {
     "foreup": _scan_foreup,
     "direct": _scan_direct,
     "custom": _scan_direct,
+    "proshop_teetimes": _scan_proshop,
 }
 
 

@@ -216,15 +216,65 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("fetchCourseSlots", body)
 
     async def test_dispatcher_returns_unsupported_for_ezlinks(self):
-        """Before this change, ezlinks/teeitup/whoosh/proshop_teetimes/cps_golf/golfback
-        courses fell through the scanner's per-platform loops and silently returned
-        nothing. The new dispatcher reports UNSUPPORTED so the UI can show it."""
+        """bridges_poplar is on ezlinks — still no scraper. The dispatcher
+        must say so explicitly, not fall through silently."""
         from app.services.scrape_dispatch import dispatch_scan, ScanStatus
-        # bridges_poplar is platform=ezlinks, which has no scraper
         slots, status, err = await dispatch_scan("bridges_poplar", "2026-04-20")
         self.assertEqual(slots, [])
         self.assertEqual(status, ScanStatus.UNSUPPORTED)
         self.assertIn("ezlinks", err)
+
+    async def test_dispatcher_routes_proshop_teetimes(self):
+        """Bowes Creek is platform=proshop_teetimes. The dispatcher must now
+        dispatch it to search_proshop rather than marking it UNSUPPORTED."""
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+        fake = [{"course_id": "bowes_creek", "date": "2026-04-18", "time": "09:40", "price": 115.0,
+                 "players_available": 4, "booking_url": "https://...", "source": "proshop_teetimes"}]
+        with patch("app.services.scrape_dispatch.search_proshop",
+                   new=AsyncMock(return_value=fake)):
+            slots, status, err = await dispatch_scan("bowes_creek", "2026-04-18")
+        self.assertEqual(status, ScanStatus.OK)
+        self.assertEqual(slots, fake)
+        self.assertIsNone(err)
+
+    def test_proshop_parse_anchor_extracts_time_and_price(self):
+        """Link text from ProShop looks like '9:40am 18H w Cart:$115.00 …'.
+        Verify we parse AM/PM correctly (including the 12pm/12am edge cases)
+        and pull the leading dollar amount."""
+        from app.scrapers.proshop import _parse_anchor
+        slot = _parse_anchor(
+            "https://booking.proshopteetimes.com/foo/TeeTimeSelected.aspx?TTID=30123693",
+            "9:40am18H w Cart:$115.00Includes Sales Tax",
+            "bowes_creek", "2026-04-18",
+        )
+        self.assertEqual(slot["time"], "09:40")
+        self.assertEqual(slot["price"], 115.0)
+        self.assertEqual(slot["walk_ride"], "ride")
+        self.assertEqual(slot["source"], "proshop_teetimes")
+        # 12:50pm stays in the afternoon
+        slot_pm = _parse_anchor("http://x", "12:50pm18H w Cart:$85.00", "bowes_creek", "2026-04-18")
+        self.assertEqual(slot_pm["time"], "12:50")
+        # 12:15am is midnight-ish (edge case: never in our range but parser should be right)
+        slot_mid = _parse_anchor("http://x", "12:15am18H w Cart:$50.00", "bowes_creek", "2026-04-18")
+        self.assertEqual(slot_mid["time"], "00:15")
+        # Garbage input returns None, doesn't crash
+        self.assertIsNone(_parse_anchor("http://x", "no time here", "bowes_creek", "2026-04-18"))
+
+    def test_proshop_course_id_falls_back_to_booking_url(self):
+        """If a course has no explicit proshop_course_id, extract it from the
+        CourseID= query param in booking_url."""
+        from app.scrapers.proshop import _proshop_course_id
+        self.assertEqual(_proshop_course_id({"proshop_course_id": "94"}), "94")
+        self.assertEqual(_proshop_course_id({
+            "booking_url": "https://booking.proshopteetimes.com/SelectPlayers.aspx?CourseID=95",
+        }), "95")
+        self.assertIsNone(_proshop_course_id({}))
+
+    def test_proshop_format_date(self):
+        """Dates need to be M/D/YYYY (no zero-padding) to match anchor hrefs."""
+        from app.scrapers.proshop import _format_proshop_date
+        self.assertEqual(_format_proshop_date("2026-04-18"), "4/18/2026")
+        self.assertEqual(_format_proshop_date("2026-10-05"), "10/5/2026")
 
     async def test_dispatcher_unknown_course_is_config_missing(self):
         from app.services.scrape_dispatch import dispatch_scan, ScanStatus
