@@ -335,11 +335,26 @@ async def _migration_4_create_web_alerts(db: aiosqlite.Connection) -> None:
     )
 
 
+async def _migration_5_create_connect_challenges(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS connect_challenges (
+            telegram_chat_id TEXT PRIMARY KEY,
+            code_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            attempts INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        """
+    )
+
+
 MIGRATIONS = [
     _migration_1_add_api_token,
     _migration_2_create_slot_alerts,
     _migration_3_backfill_legacy_alerts,
     _migration_4_create_web_alerts,
+    _migration_5_create_connect_challenges,
 ]
 
 

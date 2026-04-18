@@ -3,10 +3,13 @@ FastAPI Application
 REST API for the tee time bot — serves the mobile app / PWA.
 """
 
+import asyncio
+import hashlib
 import json
-import uuid
 import logging
-from datetime import datetime
+import secrets
+import uuid
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -16,18 +19,58 @@ from pydantic import BaseModel
 from app.models.database import init_db, get_db, generate_api_token
 from app.models.courses import COURSES, get_all_courses, get_autobook_safe_courses, get_deep_link_only_courses
 from app.services.scanner import run_scan_cycle, is_surge_mode
+from app.services.scheduler import start_scheduler, stop_scheduler
 from app.utils.crypto import encrypt, decrypt
 from app.config import settings
-from app.services.auth import require_admin_key, authorize_user_request
+from app.services.auth import require_admin_key, authorize_user_request, get_bearer_or_header_token
 
 logger = logging.getLogger(__name__)
+
+CONNECT_CODE_TTL_SECONDS = 300
+CONNECT_MAX_ATTEMPTS = 5
+
+
+def _hash_connect_code(chat_id: str, code: str) -> str:
+    return hashlib.sha256(f"{chat_id}:{code}".encode("utf-8")).hexdigest()
+
+
+async def _resolve_user_for_chat_token(request: Request, chat_id: str, db):
+    """Authenticate a dashboard caller by matching X-User-Token (or Bearer) to users.api_token.
+    Admin key bypass is honored. Returns the user row or raises 401/403."""
+    candidate = get_bearer_or_header_token(
+        request.headers.get("authorization"),
+        request.headers.get("x-api-key"),
+        request.headers.get("x-user-token"),
+    )
+    if settings.APP_API_KEY and candidate and secrets.compare_digest(candidate, settings.APP_API_KEY):
+        row = await db.execute_fetchone(
+            "SELECT * FROM users WHERE telegram_chat_id = ?", (chat_id,)
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        return row
+    if not candidate:
+        raise HTTPException(status_code=401, detail="User token required")
+    row = await db.execute_fetchone(
+        "SELECT * FROM users WHERE telegram_chat_id = ?", (chat_id,)
+    )
+    if not row or not row["api_token"] or not secrets.compare_digest(candidate, row["api_token"]):
+        raise HTTPException(status_code=403, detail="Invalid token for this chat")
+    return row
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
-    yield
+    if settings.ENABLE_SCHEDULER:
+        await start_scheduler()
+    else:
+        logger.info("Scheduler disabled for this process (ENABLE_SCHEDULER=false)")
+    try:
+        yield
+    finally:
+        await stop_scheduler()
 
 app = FastAPI(
     title="Tee Time Bot API",
@@ -36,10 +79,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# When CORS_ORIGINS contains '*', credentials must be disabled per the CORS spec
+# (browsers reject `Access-Control-Allow-Origin: *` combined with credentials).
+_cors_origins = settings.CORS_ORIGINS
+_cors_allow_credentials = "*" not in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -538,11 +586,6 @@ async def resume_alerts(user_id: str, course_id: str | None = None, request: Req
         await db.close()
 
 
-# We need this import for the background task
-import asyncio
-from datetime import timedelta
-
-
 # ===== SNIPE API =====
 
 class SnipeRequest(BaseModel):
@@ -554,24 +597,15 @@ class SnipeRequest(BaseModel):
 
 
 @app.post("/api/snipe")
-async def create_snipe(req: SnipeRequest):
-    """Create a snipe request from the dashboard."""
+async def create_snipe(req: SnipeRequest, request: Request):
+    """Create a snipe request from the dashboard. Requires X-User-Token matching the chat's user."""
     from app.services.snipe import create_snipe_request
 
-    # Find user by telegram chat ID
     db = await get_db()
     try:
-        row = await db.execute_fetchone(
-            "SELECT * FROM users WHERE telegram_chat_id = ?",
-            (req.telegram_chat_id,),
-        )
-        if not row:
-            raise HTTPException(status_code=404, detail="User not found. Connect Telegram first.")
-
-        user_id = row["id"] if hasattr(row, "__getitem__") else dict(row)["id"]
-
+        user_row = await _resolve_user_for_chat_token(request, req.telegram_chat_id, db)
         result = await create_snipe_request(
-            user_id=user_id,
+            user_id=user_row["id"],
             course_id=req.course_id,
             play_day=req.play_day,
             preferred_time=req.preferred_time,
@@ -583,21 +617,14 @@ async def create_snipe(req: SnipeRequest):
 
 
 @app.get("/api/snipes/{telegram_chat_id}")
-async def get_snipes(telegram_chat_id: str):
-    """Get active snipes for a user."""
+async def get_snipes(telegram_chat_id: str, request: Request):
+    """Get active snipes for a user. Requires X-User-Token matching the chat's user."""
     db = await get_db()
     try:
-        row = await db.execute_fetchone(
-            "SELECT id FROM users WHERE telegram_chat_id = ?",
-            (telegram_chat_id,),
-        )
-        if not row:
-            return {"snipes": []}
-
-        user_id = row["id"] if hasattr(row, "__getitem__") else dict(row)["id"]
+        user_row = await _resolve_user_for_chat_token(request, telegram_chat_id, db)
         rows = await db.execute_fetchall(
             "SELECT * FROM snipe_requests WHERE user_id = ? AND status = 'PENDING' ORDER BY play_date",
-            (user_id,),
+            (user_row["id"],),
         )
         snipes = []
         for r in rows:
@@ -618,26 +645,56 @@ class ConnectRequest(BaseModel):
     email: str = ""
 
 
+class VerifyConnectRequest(BaseModel):
+    telegram_chat_id: str
+    code: str
+
+
 @app.post("/api/connect")
 async def connect_user(req: ConnectRequest):
-    """Register a new user from the dashboard."""
+    """Start connecting a Telegram chat to a user account.
+
+    New chats are registered immediately (the user has just /started the bot, so the
+    chat_id is fresh and no prior token exists to steal).
+
+    Existing chats get a 6-digit verification code DMed via the bot. The caller must then
+    POST the code to /api/verify-connect to receive the api_token. This prevents anyone
+    who merely knows a telegram_chat_id from walking off with another user's token.
+    """
+    from app.services.notifications import send_message
+
     db = await get_db()
     try:
         existing = await db.execute_fetchone(
-            "SELECT id, api_token FROM users WHERE telegram_chat_id = ?",
+            "SELECT id FROM users WHERE telegram_chat_id = ?",
             (req.telegram_chat_id,),
         )
         if existing:
-            uid = existing["id"] if hasattr(existing, "__getitem__") else dict(existing)["id"]
-            token = existing["api_token"] if hasattr(existing, "__getitem__") else dict(existing).get("api_token")
-            if not token:
-                token = generate_api_token()
-                await db.execute(
-                    "UPDATE users SET api_token = ?, updated_at = datetime('now') WHERE id = ?",
-                    (token, uid),
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            expires_at = (datetime.utcnow() + timedelta(seconds=CONNECT_CODE_TTL_SECONDS)).isoformat()
+            await db.execute(
+                """INSERT OR REPLACE INTO connect_challenges
+                (telegram_chat_id, code_hash, expires_at, attempts, created_at)
+                VALUES (?, ?, ?, 0, datetime('now'))""",
+                (req.telegram_chat_id, _hash_connect_code(req.telegram_chat_id, code), expires_at),
+            )
+            await db.commit()
+            try:
+                await send_message(
+                    req.telegram_chat_id,
+                    f"🔐 Your verification code is <b>{code}</b>\n\nEnter it in the dashboard within 5 minutes.",
                 )
-                await db.commit()
-            return {"message": "Already connected", "user_id": uid, "api_token": token}
+            except Exception as exc:
+                logger.warning("Failed to send verification code to chat %s: %s", req.telegram_chat_id, exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not send verification code. Make sure you've messaged the bot (/start) first.",
+                )
+            return {
+                "verification_required": True,
+                "user_id": existing["id"],
+                "message": "Check your Telegram for a 6-digit code, then POST it to /api/verify-connect.",
+            }
 
         user_id = str(uuid.uuid4())[:8]
         api_token = generate_api_token()
@@ -654,6 +711,62 @@ async def connect_user(req: ConnectRequest):
         )
         await db.commit()
         return {"message": "Connected!", "user_id": user_id, "api_token": api_token}
+    finally:
+        await db.close()
+
+
+@app.post("/api/verify-connect")
+async def verify_connect(req: VerifyConnectRequest):
+    """Exchange a verification code for the user's api_token.
+
+    Called after /api/connect on an existing chat. Requires the 6-digit code that was
+    DMed to the user via Telegram. Rate-limited to CONNECT_MAX_ATTEMPTS per challenge."""
+    db = await get_db()
+    try:
+        challenge = await db.execute_fetchone(
+            "SELECT code_hash, expires_at, attempts FROM connect_challenges WHERE telegram_chat_id = ?",
+            (req.telegram_chat_id,),
+        )
+        if not challenge:
+            raise HTTPException(status_code=400, detail="No pending verification. Request a new code.")
+
+        if challenge["expires_at"] < datetime.utcnow().isoformat():
+            await db.execute("DELETE FROM connect_challenges WHERE telegram_chat_id = ?", (req.telegram_chat_id,))
+            await db.commit()
+            raise HTTPException(status_code=400, detail="Code expired. Request a new one.")
+
+        if challenge["attempts"] >= CONNECT_MAX_ATTEMPTS:
+            await db.execute("DELETE FROM connect_challenges WHERE telegram_chat_id = ?", (req.telegram_chat_id,))
+            await db.commit()
+            raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
+
+        provided_hash = _hash_connect_code(req.telegram_chat_id, (req.code or "").strip())
+        if not secrets.compare_digest(provided_hash, challenge["code_hash"]):
+            await db.execute(
+                "UPDATE connect_challenges SET attempts = attempts + 1 WHERE telegram_chat_id = ?",
+                (req.telegram_chat_id,),
+            )
+            await db.commit()
+            raise HTTPException(status_code=400, detail="Invalid code")
+
+        user_row = await db.execute_fetchone(
+            "SELECT id, api_token FROM users WHERE telegram_chat_id = ?",
+            (req.telegram_chat_id,),
+        )
+        if not user_row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        token = user_row["api_token"]
+        if not token:
+            token = generate_api_token()
+            await db.execute(
+                "UPDATE users SET api_token = ?, updated_at = datetime('now') WHERE id = ?",
+                (token, user_row["id"]),
+            )
+
+        await db.execute("DELETE FROM connect_challenges WHERE telegram_chat_id = ?", (req.telegram_chat_id,))
+        await db.commit()
+        return {"message": "Verified", "user_id": user_row["id"], "api_token": token}
     finally:
         await db.close()
 
