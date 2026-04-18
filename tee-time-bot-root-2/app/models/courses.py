@@ -282,8 +282,8 @@ COURSES = {
     },
     "bartlett_hills": {
         "name": "Bartlett Hills Golf Club",
-        "tier": "A", "platform": "direct",
-        "booking_url": "https://www.bartletthills.com/teetimes/",
+        "tier": "A", "platform": "teeitup",
+        "booking_url": "https://bartlett-hills-golf-course.book.teeitup.com/",
         "direct_url": "https://www.bartletthillsgc.com",
         "golfnow_facility_id": None,
         "phone": "(630) 837-2741",
@@ -419,8 +419,8 @@ COURSES = {
     },
     "green_garden": {
         "name": "Green Garden Country Club",
-        "tier": "A", "platform": "direct",
-        "booking_url": "https://www.greengardencc.com/teetimes/",
+        "tier": "A", "platform": "teeitup",
+        "booking_url": "https://green-garden-country-club-blue-course.book.teeitup.com/",
         "direct_url": "https://www.greengardencc.com",
         "golfnow_facility_id": None,
         "phone": "(815) 469-3350",
@@ -467,8 +467,8 @@ COURSES = {
     },
     "lost_marsh": {
         "name": "Lost Marsh Golf Course",
-        "tier": "A", "platform": "direct",
-        "booking_url": "https://www.lostmarshgolf.com/teetimes/",
+        "tier": "A", "platform": "teeitup",
+        "booking_url": "https://lost-marsh-golf-course.book.teeitup.com/",
         "direct_url": "https://www.lostmarsh.com",
         "golfnow_facility_id": None,
         "phone": "(219) 932-4653",
