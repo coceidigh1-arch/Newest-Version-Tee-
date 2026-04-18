@@ -215,14 +215,22 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("function rNow", body)
         self.assertIn("fetchCourseSlots", body)
 
-    async def test_dispatcher_returns_unsupported_for_ezlinks(self):
-        """bridges_poplar is on ezlinks — still no scraper. The dispatcher
-        must say so explicitly, not fall through silently."""
+    async def test_dispatcher_returns_unsupported_for_unknown_platform(self):
+        """Courses on a platform without a registered scraper must report
+        UNSUPPORTED explicitly, not fall through silently. Uses a mock
+        course with a synthetic platform so this test doesn't break when
+        we add a real scraper for a previously-unsupported platform."""
         from app.services.scrape_dispatch import dispatch_scan, ScanStatus
-        slots, status, err = await dispatch_scan("bridges_poplar", "2026-04-20")
+        from app.models.courses import COURSES
+        fake_id = "__test_unknown_platform__"
+        COURSES[fake_id] = {"name": "Fake Course", "platform": "made_up_provider"}
+        try:
+            slots, status, err = await dispatch_scan(fake_id, "2026-04-20")
+        finally:
+            COURSES.pop(fake_id, None)
         self.assertEqual(slots, [])
         self.assertEqual(status, ScanStatus.UNSUPPORTED)
-        self.assertIn("ezlinks", err)
+        self.assertIn("made_up_provider", err)
 
     async def test_dispatcher_routes_proshop_teetimes(self):
         """Bowes Creek is platform=proshop_teetimes. The dispatcher must now
