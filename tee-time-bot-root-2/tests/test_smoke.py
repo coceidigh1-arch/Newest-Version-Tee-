@@ -106,6 +106,102 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             settings.TELEGRAM_WEBHOOK_SECRET = ""
 
+    async def test_course_week_returns_seven_grouped_days(self):
+        """The /api/course/{id}/week endpoint returns every day in the window even when
+        some days have no availability, with slots sorted chronologically within each day."""
+        from datetime import datetime, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Chicago")
+        except Exception:
+            import pytz
+            tz = pytz.timezone("America/Chicago")
+        today = datetime.now(tz).date()
+        d0 = today.strftime("%Y-%m-%d")
+        d2 = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+        d6 = (today + timedelta(days=6)).strftime("%Y-%m-%d")
+        d9 = (today + timedelta(days=9)).strftime("%Y-%m-%d")  # outside 7-day window
+
+        db = await get_db()
+        try:
+            # Two slots on d0 (unsorted), one on d2, one on d6, one outside window.
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s1', 'bolingbrook', ?, '09:30', 95, 'https://book/1')",
+                (d0,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s2', 'bolingbrook', ?, '07:00', 85, 'https://book/2')",
+                (d0,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s3', 'bolingbrook', ?, '08:15', 90, 'https://book/3')",
+                (d2,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s4', 'bolingbrook', ?, '12:00', 60, 'https://book/4')",
+                (d6,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('s5', 'bolingbrook', ?, '07:00', 95, 'https://book/5')",
+                (d9,),
+            )
+            # Disappeared slot on d0 — should NOT appear
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url, disappeared_at) "
+                "VALUES ('s6', 'bolingbrook', ?, '06:00', 70, 'https://book/6', datetime('now'))",
+                (d0,),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/course/bolingbrook/week?days=7")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["course_id"], "bolingbrook")
+        self.assertEqual(body["timezone"], "America/Chicago")
+        self.assertEqual(len(body["days"]), 7)
+        self.assertEqual(body["start_date"], d0)
+
+        by_date = {day["date"]: day for day in body["days"]}
+        # d0: two slots, sorted earliest-to-latest, disappeared slot excluded
+        self.assertEqual([s["time"] for s in by_date[d0]["slots"]], ["07:00", "09:30"])
+        self.assertEqual(by_date[d0]["slot_count"], 2)
+        # d2 and d6: one slot each
+        self.assertEqual(by_date[d2]["slot_count"], 1)
+        self.assertEqual(by_date[d6]["slot_count"], 1)
+        # Other days: empty placeholders present
+        d1 = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+        self.assertIn(d1, by_date)
+        self.assertEqual(by_date[d1]["slots"], [])
+        self.assertEqual(by_date[d1]["slot_count"], 0)
+        # d9 is outside the 7-day window, must not appear
+        self.assertNotIn(d9, by_date)
+        self.assertEqual(body["total_slots"], 4)
+        # Every returned slot keeps its booking URL
+        for day in body["days"]:
+            for slot in day["slots"]:
+                self.assertTrue(slot.get("booking_url", "").startswith("https://book/"))
+
+    async def test_course_week_unknown_course_returns_404(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/course/not-a-real-course/week")
+        self.assertEqual(response.status_code, 404)
+
+    async def test_course_week_rejects_out_of_range_days(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r0 = await client.get("/api/course/bolingbrook/week?days=0")
+            r15 = await client.get("/api/course/bolingbrook/week?days=15")
+        self.assertEqual(r0.status_code, 400)
+        self.assertEqual(r15.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

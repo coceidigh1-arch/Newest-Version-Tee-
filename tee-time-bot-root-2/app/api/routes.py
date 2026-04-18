@@ -771,6 +771,89 @@ async def verify_connect(req: VerifyConnectRequest):
         await db.close()
 
 
+@app.get("/api/course/{course_id}/week")
+async def get_course_week(course_id: str, days: int = 7):
+    """Return every future slot for a course across a rolling N-day window (default 7).
+
+    Response is pre-grouped by date with an entry for every day — including days that
+    have zero availability — so the UI can render a full week view without having to
+    reconstruct the date range itself.
+
+    Dates are computed in America/Chicago (the app's operational timezone) so the
+    window is stable regardless of where the server is physically running."""
+    if course_id not in COURSES:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if days < 1 or days > 14:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 14")
+
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Chicago")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("America/Chicago")
+
+    today = datetime.now(tz).date()
+    date_range = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    start_date, end_date = date_range[0], date_range[-1]
+
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            """SELECT * FROM seen_slots
+               WHERE course_id = ?
+                 AND disappeared_at IS NULL
+                 AND date >= ?
+                 AND date <= ?
+               ORDER BY date ASC, time ASC""",
+            (course_id, start_date, end_date),
+        )
+
+        course = COURSES[course_id]
+        course_name = course.get("name", course_id)
+        booking_url_fallback = course.get("direct_url") or course.get("booking_url", "")
+
+        slots_by_date: dict[str, list[dict]] = {d: [] for d in date_range}
+        seen_slot_ids: set[str] = set()
+        for row in rows:
+            d = row["date"]
+            if d not in slots_by_date:
+                continue
+            slot = dict(row)
+            slot_id = slot.get("id")
+            if slot_id and slot_id in seen_slot_ids:
+                continue
+            if slot_id:
+                seen_slot_ids.add(slot_id)
+            slot["course_name"] = course_name
+            if not slot.get("booking_url"):
+                slot["booking_url"] = booking_url_fallback
+            slots_by_date[d].append(slot)
+
+        days_out = []
+        for d in date_range:
+            day_slots = slots_by_date[d]
+            day_slots.sort(key=lambda s: (s.get("time") or ""))
+            days_out.append({
+                "date": d,
+                "slot_count": len(day_slots),
+                "slots": day_slots,
+            })
+
+        return {
+            "course_id": course_id,
+            "course_name": course_name,
+            "timezone": "America/Chicago",
+            "start_date": start_date,
+            "end_date": end_date,
+            "days": days_out,
+            "total_slots": sum(d["slot_count"] for d in days_out),
+            "generated_at": datetime.now(tz).isoformat(),
+        }
+    finally:
+        await db.close()
+
+
 @app.get("/api/releases")
 async def get_releases():
     """Get upcoming tee time release events."""
