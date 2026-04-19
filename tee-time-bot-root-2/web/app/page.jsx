@@ -1,5 +1,6 @@
 import { Phone } from "@/components/ios-frame";
 import ScreenDashboard from "@/components/screen-dashboard";
+import AutoRefresh from "@/components/auto-refresh";
 import { getDashboardData } from "@/lib/backend";
 import { filtersFromSearchParams } from "@/lib/filters";
 
@@ -14,6 +15,7 @@ export default async function Page({ searchParams }) {
   });
   return (
     <main className="stage">
+      <AutoRefresh intervalMs={60000}/>
       <Phone>
         <ScreenDashboard
           teeTimes={teeTimes}

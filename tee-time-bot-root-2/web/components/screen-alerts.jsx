@@ -1,5 +1,6 @@
 "use client";
 import { Icon } from "@/components/primitives";
+import WatchAlerts from "@/components/watch-alerts";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 
@@ -30,6 +31,12 @@ export default function ScreenAlerts({ alerts = [] }) {
         <div style={{ fontSize: 12, color:'var(--forest-600)', marginTop: 10 }}>
           You&apos;ll hear from us when it actually matters. No feed slop.
         </div>
+      </div>
+
+      <WatchAlerts/>
+
+      <div style={{ padding:'14px 20px 8px 20px' }}>
+        <div className="eyebrow">Signal feed</div>
       </div>
 
       <div style={{ padding:'0 20px 16px', display:'flex', gap: 6, overflow:'auto' }} className="noscroll">
