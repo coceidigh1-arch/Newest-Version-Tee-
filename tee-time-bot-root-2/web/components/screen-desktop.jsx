@@ -3,11 +3,12 @@ import {
   ScoreRing, TierChip, SignalBadge, SlotDots, WxIcon, Icon,
 } from "@/components/primitives";
 import { MarkFlag } from "@/components/brand";
-import { COURSES, TEE_TIMES } from "@/lib/data";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 
-export default function ScreenDesktop() {
+export default function ScreenDesktop({ teeTimes = [], courses = [] }) {
+  const COURSES = courses;
+  const TEE_TIMES = teeTimes;
   return (
     <div style={{
       width: 1440, height: 900, background: cream,
@@ -173,7 +174,7 @@ export default function ScreenDesktop() {
             <div className="eyebrow" style={{ marginBottom: 4 }}>Saturday · April 25</div>
             <div style={{ fontFamily:'var(--f-display)', fontStyle:'italic',
               fontSize: 40, lineHeight: 1, letterSpacing:-1, color: forest }}>
-              12 prime windows
+              {TEE_TIMES.length} prime windows
             </div>
           </div>
           <div style={{ display:'flex', gap: 6 }}>
@@ -324,7 +325,7 @@ export default function ScreenDesktop() {
             position:'absolute', top: 14, left: 14, right: 14,
             display:'flex', alignItems:'center', justifyContent:'space-between',
           }}>
-            <div className="eyebrow" style={{ color:'var(--sand-400)' }}>Coverage · 40 courses</div>
+            <div className="eyebrow" style={{ color:'var(--sand-400)' }}>Coverage · {COURSES.length} courses</div>
             <div style={{
               display:'flex', alignItems:'center', gap: 6,
               fontFamily:'var(--f-mono)', fontSize: 9, color:'var(--sand-400)', letterSpacing: 0.3,

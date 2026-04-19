@@ -6,15 +6,28 @@ import {
   SectionLabel, Icon,
 } from "@/components/primitives";
 import { MarkFlag } from "@/components/brand";
-import { COURSES, TEE_TIMES, courseById } from "@/lib/data";
 
 const cream = '#F4EFE4';
 const forest = '#0E2A1F';
 
-export default function ScreenDashboard() {
-  const hero = TEE_TIMES[0];
-  const rest = TEE_TIMES.slice(1, 5);
-  const heroCourse = courseById[hero.course];
+export default function ScreenDashboard({ teeTimes = [], courses = [], isSample = true, totalCount }) {
+  const courseById = Object.fromEntries(courses.map(c => [c.id, c]));
+  const hero = teeTimes[0];
+  const rest = teeTimes.slice(1, 5);
+  const heroCourse = hero ? courseById[hero.course] : null;
+  if (!hero || !heroCourse) {
+    return (
+      <div style={{ background: cream, minHeight: '100%', padding: '80px 24px', fontFamily:'var(--f-ui)', color: forest }}>
+        <div style={{ fontFamily:'var(--f-display)', fontStyle:'italic', fontSize: 32, letterSpacing:-1 }}>
+          No tee times yet.
+        </div>
+        <div style={{ fontSize: 13, color:'var(--forest-600)', marginTop: 10 }}>
+          The scanner hasn&apos;t surfaced any open windows. Check back soon.
+        </div>
+      </div>
+    );
+  }
+  const resultsLabel = totalCount ? `${totalCount} results · sort: score` : `${teeTimes.length} results · sort: score`;
 
   return (
     <div style={{ background: cream, minHeight: '100%', paddingBottom: 100, fontFamily:'var(--f-ui)' }}>
@@ -49,8 +62,9 @@ export default function ScreenDashboard() {
           marginTop: 10, fontSize: 14, color:'var(--forest-600)',
           lineHeight: 1.45, maxWidth: 320,
         }}>
-          We scanned <span className="tnum" style={{color:forest}}>40 courses</span> overnight.
-          Twelve PRIME windows opened — here&apos;s what fits you.
+          We scanned <span className="tnum" style={{color:forest}}>{courses.length || 40} courses</span> overnight.
+          {isSample ? " Sample data shown — " : " "}
+          {teeTimes.length} window{teeTimes.length === 1 ? "" : "s"} fit you today.
         </div>
       </div>
 
@@ -76,7 +90,7 @@ export default function ScreenDashboard() {
         <HeroCard tt={hero} course={heroCourse}/>
       </div>
 
-      <SectionLabel extra="12 results · sort: score">Next best</SectionLabel>
+      <SectionLabel extra={resultsLabel}>Next best</SectionLabel>
       <div style={{ padding:'0 20px' }}>
         {rest.map(tt => (
           <TeeRow key={tt.id} tt={tt} course={courseById[tt.course]}/>
@@ -92,7 +106,7 @@ export default function ScreenDashboard() {
           color: forest, letterSpacing: 0.2,
           display:'flex', alignItems:'center', justifyContent:'center', gap:8,
         }}>
-          See all 12 matches
+          See all {totalCount || teeTimes.length} matches
           <Icon name="chev" size={14} color={forest}/>
         </button>
       </div>

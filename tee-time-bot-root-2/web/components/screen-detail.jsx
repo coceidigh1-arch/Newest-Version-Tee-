@@ -1,12 +1,18 @@
 "use client";
 import { ScoreRing, TierChip, SignalBadge, WxIcon, Icon } from "@/components/primitives";
-import { COURSES, TEE_TIMES } from "@/lib/data";
 
 const cream = '#F4EFE4', forest = '#0E2A1F';
 
-export default function ScreenDetail() {
-  const tt = TEE_TIMES[0];
-  const course = COURSES.find(c => c.id === tt.course);
+export default function ScreenDetail({ teeTimes = [], courses = [] }) {
+  const tt = teeTimes[0];
+  const course = tt ? courses.find(c => c.id === tt.course) : null;
+  if (!tt || !course) {
+    return (
+      <div style={{ background: cream, minHeight: '100%', padding: '80px 24px', fontFamily:'var(--f-ui)', color: forest }}>
+        <div style={{ fontFamily:'var(--f-display)', fontStyle:'italic', fontSize: 28 }}>No tee time selected.</div>
+      </div>
+    );
+  }
   return (
     <div style={{ background: cream, minHeight:'100%', fontFamily:'var(--f-ui)', paddingBottom: 120, position:'relative' }}>
       <div style={{ paddingTop: 58, padding:'58px 20px 8px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>

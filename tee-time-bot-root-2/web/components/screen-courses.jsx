@@ -1,10 +1,10 @@
 "use client";
 import { TierChip, Sparkline, Icon } from "@/components/primitives";
-import { COURSES } from "@/lib/data";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 
-export default function ScreenCourses() {
+export default function ScreenCourses({ courses = [] }) {
+  const COURSES = courses;
   return (
     <div style={{ background: cream, minHeight:'100%', fontFamily:'var(--f-ui)', paddingBottom: 120 }}>
       <div style={{ paddingTop: 58, padding:'58px 20px 6px' }}>
@@ -14,7 +14,7 @@ export default function ScreenCourses() {
           The watchlist.
         </div>
         <div style={{ fontSize: 12, color:'var(--forest-600)', marginTop: 10 }}>
-          40 Chicago-area courses. Pin the ones you care about.
+          {COURSES.length} Chicago-area courses. Pin the ones you care about.
         </div>
       </div>
 
@@ -30,7 +30,7 @@ export default function ScreenCourses() {
       </div>
 
       <div style={{ padding:'0 20px 12px', display:'flex', gap: 6, overflow:'auto' }} className="noscroll">
-        {['All 40','★ Pinned (7)','A+ only','Within 30mi','Designer'].map((l,i)=>(
+        {[`All ${COURSES.length}`,'★ Pinned','A+ only','Within 30mi','Designer'].map((l,i)=>(
           <button key={l} style={{
             height: 30, padding:'0 12px', borderRadius: 999,
             background: i===1 ? forest : 'transparent',
