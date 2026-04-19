@@ -208,26 +208,36 @@ export function HeroCard({ tt, course }) {
       </div>
 
       <div style={{ display:'flex', gap: 10 }}>
-        <button style={{
-          flex: 1, height: 50, borderRadius: 14,
-          background: 'var(--brass-500)',
-          color:'var(--ink-900)',
-          border:'none',
-          fontFamily:'var(--f-ui)', fontSize: 15, fontWeight: 600,
-          letterSpacing: 0.2,
-          display:'flex', alignItems:'center', justifyContent:'center', gap: 8,
-        }}>
-          Book · <span className="tnum">${tt.price}</span>
+        <a
+          href={tt.booking_url || "#"}
+          target={tt.booking_url ? "_blank" : undefined}
+          rel={tt.booking_url ? "noopener noreferrer" : undefined}
+          style={{
+            flex: 1, height: 50, borderRadius: 14,
+            background: 'var(--brass-500)',
+            color:'var(--ink-900)',
+            border:'none',
+            fontFamily:'var(--f-ui)', fontSize: 15, fontWeight: 600,
+            letterSpacing: 0.2, textDecoration:'none',
+            display:'flex', alignItems:'center', justifyContent:'center', gap: 8,
+            opacity: tt.booking_url ? 1 : 0.5,
+            pointerEvents: tt.booking_url ? 'auto' : 'none',
+          }}
+        >
+          Book · <span className="tnum">{tt.price > 0 ? `$${tt.price}` : "see site"}</span>
           <Icon name="arrow-up-right" size={14} color="var(--ink-900)"/>
-        </button>
-        <button style={{
-          height: 50, width: 50, borderRadius: 14,
-          background:'transparent', border:'1px solid rgba(244,239,228,0.22)',
-          color:'#F4EFE4',
-          display:'flex', alignItems:'center', justifyContent:'center',
-        }}>
-          <Icon name="zap" size={18} color="var(--brass-400)"/>
-        </button>
+        </a>
+        <a
+          href={`/detail/${tt.id}`}
+          style={{
+            height: 50, width: 50, borderRadius: 14,
+            background:'transparent', border:'1px solid rgba(244,239,228,0.22)',
+            color:'#F4EFE4', textDecoration:'none',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}
+        >
+          <Icon name="arrow-up-right" size={18} color="var(--brass-400)"/>
+        </a>
       </div>
 
       <div style={{
@@ -252,12 +262,13 @@ export function HeroCard({ tt, course }) {
 
 export function TeeRow({ tt, course }) {
   return (
-    <div style={{
+    <a href={`/detail/${tt.id}`} style={{
       display:'grid',
       gridTemplateColumns: '52px 1fr auto',
       gap: 14, alignItems:'center',
       padding: '16px 4px',
       borderBottom: '1px solid var(--hair)',
+      textDecoration:'none', color:'inherit',
     }}>
       <div>
         <div className="tnum" style={{
@@ -295,7 +306,7 @@ export function TeeRow({ tt, course }) {
       <div style={{ display:'flex', alignItems:'center', gap: 8 }}>
         <ScoreRing value={tt.score} size={36} stroke={2}/>
       </div>
-    </div>
+    </a>
   );
 }
 

@@ -3,8 +3,9 @@ import { ScoreRing, TierChip, SignalBadge, WxIcon, Icon } from "@/components/pri
 
 const cream = '#F4EFE4', forest = '#0E2A1F';
 
-export default function ScreenDetail({ teeTimes = [], courses = [] }) {
-  const tt = teeTimes[0];
+export default function ScreenDetail({ teeTime, teeTimes, courses = [] }) {
+  // Accept either a single teeTime or legacy array.
+  const tt = teeTime || (teeTimes && teeTimes[0]);
   const course = tt ? courses.find(c => c.id === tt.course) : null;
   if (!tt || !course) {
     return (
@@ -19,7 +20,7 @@ export default function ScreenDetail({ teeTimes = [], courses = [] }) {
         <a href="/" style={{ background:'transparent', border:'none', padding:0, transform:'rotate(180deg)', color:forest }}>
           <Icon name="chev" size={20} color={forest}/>
         </a>
-        <div className="eyebrow">Tee time · #CH-{tt.id.toUpperCase()}</div>
+        <div className="eyebrow">Tee time · #{String(tt.id).slice(0, 8).toUpperCase()}</div>
         <Icon name="pin" size={18} color={forest}/>
       </div>
 
@@ -49,7 +50,7 @@ export default function ScreenDetail({ teeTimes = [], courses = [] }) {
 
       <div style={{ padding:'0 20px 6px', display:'grid', gridTemplateColumns:'1fr auto', gap: 10, alignItems:'center' }}>
         <div>
-          <div className="eyebrow">Saturday, April 25</div>
+          <div className="eyebrow">{tt.humanDate || tt.day}</div>
           <div style={{ fontFamily:'var(--f-mono)', fontSize: 56, lineHeight: 1, color: forest, letterSpacing:-2, marginTop: 8 }}>
             {tt.time}
           </div>
@@ -58,12 +59,11 @@ export default function ScreenDetail({ teeTimes = [], courses = [] }) {
       </div>
 
       <div style={{ padding:'10px 20px 0', display:'flex', gap: 6, flexWrap:'wrap' }}>
-        <SignalBadge kind="prime"/>
-        <SignalBadge kind="rare"/>
+        {(tt.signals || []).map(s => <SignalBadge key={s} kind={s}/>)}
       </div>
 
       <div style={{ padding:'22px 20px 0' }}>
-        <div className="eyebrow" style={{ marginBottom: 10 }}>Why it scored 96</div>
+        <div className="eyebrow" style={{ marginBottom: 10 }}>Why it scored {tt.score}</div>
         <div style={{ background:'#fff', borderRadius: 14, border:'1px solid var(--hair)', overflow:'hidden' }}>
           {[
             ['Course priority', '#1 must-play', 30, 30],
@@ -92,9 +92,9 @@ export default function ScreenDetail({ teeTimes = [], courses = [] }) {
         <div className="eyebrow" style={{ marginBottom: 10 }}>Conditions at tee off</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 8 }}>
           {[
-            { icon:'sun', label:'Clear', value:'58°' },
-            { icon:'wind', label:'Wind', value:'6 mph SW' },
-            { icon:'drizzle', label:'Precip', value:'0%' },
+            { icon: tt.wx || 'sun', label: 'Temp', value: tt.temp != null ? `${tt.temp}°` : '—' },
+            { icon: 'wind', label: 'Wind', value: tt.wind != null ? `${tt.wind} mph` : '—' },
+            { icon: 'drizzle', label: 'Precip', value: tt.precip != null ? `${tt.precip}%` : '—' },
           ].map((s,i)=>(
             <div key={i} style={{
               background:'#fff', border:'1px solid var(--hair)', borderRadius: 12,
@@ -110,22 +110,25 @@ export default function ScreenDetail({ teeTimes = [], courses = [] }) {
 
       <div style={{ position:'absolute', left: 20, right: 20, bottom: 24, zIndex: 10,
         display:'flex', gap: 10 }}>
-        <button style={{
-          flex: 1, height: 54, borderRadius: 16,
-          background: forest, color: cream, border:'none',
-          fontFamily:'var(--f-ui)', fontSize: 15, fontWeight: 600,
-          display:'flex', alignItems:'center', justifyContent:'center', gap: 8,
-          boxShadow:'0 10px 30px -10px rgba(14,42,31,0.4)',
-        }}>
-          Book on {course.platform} · <span className="tnum">${tt.price}</span>
-        </button>
-        <button style={{
-          height: 54, width: 54, borderRadius: 16,
-          background:'var(--brass-500)', border:'none', color:'var(--ink-900)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-        }}>
-          <Icon name="zap" size={20} color="var(--ink-900)"/>
-        </button>
+        <a
+          href={tt.booking_url || "#"}
+          target={tt.booking_url ? "_blank" : undefined}
+          rel={tt.booking_url ? "noopener noreferrer" : undefined}
+          style={{
+            flex: 1, height: 54, borderRadius: 16,
+            background: forest, color: cream, border:'none',
+            fontFamily:'var(--f-ui)', fontSize: 15, fontWeight: 600,
+            display:'flex', alignItems:'center', justifyContent:'center', gap: 8,
+            boxShadow:'0 10px 30px -10px rgba(14,42,31,0.4)',
+            textDecoration:'none',
+            opacity: tt.booking_url ? 1 : 0.5,
+            pointerEvents: tt.booking_url ? 'auto' : 'none',
+          }}
+        >
+          Book on {course.platform}
+          {tt.price > 0 && <> · <span className="tnum">${tt.price}</span></>}
+          <Icon name="arrow-up-right" size={16} color={cream}/>
+        </a>
       </div>
     </div>
   );

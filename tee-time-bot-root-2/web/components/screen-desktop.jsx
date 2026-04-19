@@ -213,7 +213,7 @@ export default function ScreenDesktop({ teeTimes = [], courses = [] }) {
           const course = COURSES.find(c=>c.id===tt.course);
           const isTop = i===0;
           return (
-            <div key={tt.id} style={{
+            <a key={tt.id} href={`/detail/${tt.id}`} style={{
               display:'grid',
               gridTemplateColumns: '40px 90px 1fr 80px 90px 80px 120px 70px 100px',
               gap: 12, alignItems:'center',
@@ -221,6 +221,7 @@ export default function ScreenDesktop({ teeTimes = [], courses = [] }) {
               borderBottom:'1px solid var(--hair)',
               background: isTop ? 'rgba(184,147,90,0.08)' : 'transparent',
               borderLeft: isTop ? '2px solid var(--brass-500)' : '2px solid transparent',
+              textDecoration:'none', color:'inherit',
             }}>
               <span className="tnum" style={{ fontSize: 13, color:'var(--forest-600)', fontWeight: 500 }}>
                 {String(i+1).padStart(2,'0')}
@@ -259,17 +260,28 @@ export default function ScreenDesktop({ teeTimes = [], courses = [] }) {
                 <ScoreRing value={tt.score} size={34} stroke={2}/>
               </div>
               <div style={{ display:'flex', justifyContent:'flex-end', gap: 6 }}>
-                <button style={{
-                  height: 30, padding:'0 12px', borderRadius: 6,
-                  background: isTop ? 'var(--brass-500)' : forest,
-                  color: isTop ? 'var(--ink-900)' : cream,
-                  border:'none', fontSize: 12, fontWeight: 600,
-                  display:'flex', alignItems:'center', gap: 4,
-                }}>
+                <span
+                  onClick={(e) => {
+                    if (tt.booking_url) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      window.open(tt.booking_url, '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  style={{
+                    height: 30, padding:'0 12px', borderRadius: 6,
+                    background: isTop ? 'var(--brass-500)' : forest,
+                    color: isTop ? 'var(--ink-900)' : cream,
+                    border:'none', fontSize: 12, fontWeight: 600,
+                    display:'inline-flex', alignItems:'center', gap: 4,
+                    cursor: tt.booking_url ? 'pointer' : 'not-allowed',
+                    opacity: tt.booking_url ? 1 : 0.5,
+                  }}
+                >
                   Book <Icon name="arrow-up-right" size={11} color={isTop ? 'var(--ink-900)' : cream}/>
-                </button>
+                </span>
               </div>
-            </div>
+            </a>
           );
         })}
       </div>

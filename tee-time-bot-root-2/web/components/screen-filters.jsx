@@ -1,15 +1,36 @@
 "use client";
 import React from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/primitives";
+import { buildFilterUrl } from "@/lib/filters";
 
 const cream = '#F4EFE4', forest = '#0E2A1F';
 
 export default function ScreenFilters() {
+  const router = useRouter();
   const [day, setDay] = React.useState('SAT');
   const [window_, setWindow] = React.useState([330, 480]);
   const [price, setPrice] = React.useState(130);
   const [players, setPlayers] = React.useState(2);
   const fmt = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+
+  function applyFilters() {
+    const url = buildFilterUrl("/", {
+      day,
+      tMin: window_[0],
+      tMax: window_[1],
+      priceMax: price,
+      players,
+    });
+    router.push(url);
+  }
+
+  function resetFilters() {
+    setDay('SAT');
+    setWindow([330, 480]);
+    setPrice(130);
+    setPlayers(2);
+  }
 
   return (
     <div style={{ background: cream, minHeight: '100%', fontFamily:'var(--f-ui)', paddingBottom: 120, position:'relative' }}>
@@ -20,8 +41,8 @@ export default function ScreenFilters() {
         <div style={{ flex:1 }}/>
         <div className="eyebrow">Filter</div>
         <div style={{ flex:1 }}/>
-        <button style={{ background:'transparent', border:'none', padding:0,
-          fontFamily:'var(--f-ui)', fontSize: 13, color:'var(--forest-600)' }}>Reset</button>
+        <button onClick={resetFilters} style={{ background:'transparent', border:'none', padding:0,
+          fontFamily:'var(--f-ui)', fontSize: 13, color:'var(--forest-600)', cursor:'pointer' }}>Reset</button>
       </div>
 
       <div style={{ padding:'8px 20px' }}>
@@ -146,14 +167,15 @@ export default function ScreenFilters() {
       </div>
 
       <div style={{ position:'absolute', left: 20, right: 20, bottom: 24, zIndex: 10 }}>
-        <button style={{
+        <button onClick={applyFilters} style={{
           width:'100%', height: 54, borderRadius: 16,
           background: forest, color: cream, border:'none',
           fontFamily:'var(--f-ui)', fontSize: 15, fontWeight: 600, letterSpacing: 0.2,
           display:'flex', alignItems:'center', justifyContent:'center', gap: 10,
           boxShadow:'0 10px 30px -10px rgba(14,42,31,0.4)',
+          cursor:'pointer',
         }}>
-          Show 12 matches
+          Show matches
           <Icon name="arrow-up-right" size={14} color={cream}/>
         </button>
       </div>

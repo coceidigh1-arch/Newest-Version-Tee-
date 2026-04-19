@@ -227,8 +227,29 @@ export async function getCourses() {
   return raw.map(transformCourse);
 }
 
+const DAY_TO_SHORT = {
+  0: "SUN", 1: "MON", 2: "TUE", 3: "WED", 4: "THU", 5: "FRI", 6: "SAT",
+};
+
+function applyFilters(teeTimes, filters) {
+  if (!filters) return teeTimes;
+  const { day, priceMax, players, tMin, tMax } = filters;
+  return teeTimes.filter(t => {
+    if (day && t.day !== day) return false;
+    if (priceMax != null && t.price > priceMax) return false;
+    if (players != null && (t.slotsLeft ?? 4) < players) return false;
+    if (tMin != null || tMax != null) {
+      const [h, m] = (t.time || "00:00").split(":").map(Number);
+      const mins = h * 60 + (m || 0);
+      if (tMin != null && mins < tMin) return false;
+      if (tMax != null && mins > tMax) return false;
+    }
+    return true;
+  });
+}
+
 // Returns: { teeTimes, courses, weather, alerts, isSample, openSlotsByCourse }
-export async function getDashboardData({ prefs = DEFAULT_PREFS, limit = 20 } = {}) {
+export async function getDashboardData({ prefs = DEFAULT_PREFS, limit = 20, filters = null } = {}) {
   const [coursesData, slotsData] = await Promise.all([
     fetchJson("/courses"),
     fetchJson(`/slots?limit=300`),
@@ -260,7 +281,9 @@ export async function getDashboardData({ prefs = DEFAULT_PREFS, limit = 20 } = {
 
   const scoredMap = Object.fromEntries(allScored.map((s) => [s.id, s]));
 
-  const teeTimes = [...allScored]
+  const filtered = applyFilters(allScored, filters);
+
+  const teeTimes = [...filtered]
     .sort(
       (a, b) =>
         b.score - a.score ||
@@ -284,6 +307,7 @@ export async function getDashboardData({ prefs = DEFAULT_PREFS, limit = 20 } = {
     alerts: alerts.length ? alerts : SAMPLE_ALERTS,
     openSlotsByCourse,
     weatherByDate,
+    totalMatches: filtered.length,
     isSample: false,
   };
 }
