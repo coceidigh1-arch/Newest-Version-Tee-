@@ -186,7 +186,8 @@ export function HeroCard({ tt, course }) {
           <div style={{ display:'flex', alignItems:'center', gap: 8, marginTop: 8 }}>
             <WxIcon kind={tt.wx} size={14} color="var(--sand-400)"/>
             <span className="tnum" style={{ fontSize: 11, color:'var(--sand-400)' }}>
-              {tt.temp}° · {tt.wind}mph
+              {tt.temp != null ? `${tt.temp}°` : "—"}
+              {tt.wind != null ? ` · ${tt.wind}mph` : ""}
             </span>
             <span style={{ width:1, height:10, background:'rgba(244,239,228,0.15)' }}/>
             <SunriseLine sunrise={tt.sunrise} time={tt.time} width={80} dark/>
@@ -283,7 +284,7 @@ export function TeeRow({ tt, course }) {
         }}>
           <span style={{ display:'flex', alignItems:'center', gap:4 }}>
             <WxIcon kind={tt.wx} size={11} color="var(--forest-600)"/>
-            <span className="tnum">{tt.temp}°</span>
+            <span className="tnum">{tt.temp != null ? `${tt.temp}°` : "—"}</span>
           </span>
           <span>{course.distance}mi {course.dir}</span>
           <span className="tnum">${tt.price}</span>

@@ -45,16 +45,16 @@ function formatHumanDate(iso) {
   return `${DAY_LONG[d.getUTCDay()]} ${MONTH_SHORT[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
-// Weather-code → Fairway wx glyph (open-meteo WMO codes)
-function wmoToGlyph(code) {
-  if (code == null) return "sun";
-  if (code === 0 || code === 1) return "sun";
-  if (code === 2 || code === 3) return "cloud";
-  if (code >= 45 && code <= 48) return "cloud";
-  if (code >= 51 && code <= 67) return "drizzle";
-  if (code >= 71 && code <= 77) return "drizzle";
-  if (code >= 80 && code <= 82) return "drizzle";
-  if (code >= 95 && code <= 99) return "wind";
+// Condition string → Fairway wx glyph (backend emits e.g. "Clear", "Clouds",
+// "Rain", "Drizzle", "Thunderstorm", "Snow").
+function conditionToGlyph(conditions, wind) {
+  const first = (conditions?.[0] || "").toLowerCase();
+  if (first.includes("clear") || first === "") return "sun";
+  if (first.includes("rain") || first.includes("drizzle") || first.includes("snow") || first.includes("storm")) {
+    return "drizzle";
+  }
+  if (first.includes("cloud") || first.includes("fog") || first.includes("mist")) return "cloud";
+  if (wind != null && wind >= 18) return "wind";
   return "sun";
 }
 
@@ -131,9 +131,9 @@ function transformSlot(slot, courseById, rank, weatherByDate, prefs) {
     score,
     rank,
     signals: deriveSignals(slot, course, score),
-    wx: wx.glyph || wmoToGlyph(wx.code),
-    temp: wx.temp_high ?? wx.temp ?? null,
-    wind: wx.wind_speed ?? wx.wind ?? null,
+    wx: wx.glyph || "sun",
+    temp: wx.temp ?? null,
+    wind: wx.wind ?? null,
     precip: wx.precipitation_prob ?? null,
     sunrise: wx.sunrise || approxSunriseForMonth(slot.date),
     reason: deriveReason(slot, course, score, prefs),
@@ -157,16 +157,16 @@ async function fetchWeatherForDates(dates) {
   const out = {};
   for (const [date, fc] of Object.entries(forecasts)) {
     if (!fc) continue;
+    const conditions = Array.isArray(fc.conditions) ? fc.conditions : [];
     out[date] = {
-      code: fc.weather_code,
-      glyph: wmoToGlyph(fc.weather_code),
-      temp_high: fc.temp_high,
-      temp_low: fc.temp_low,
-      temp: fc.temp_high ?? fc.temp,
-      wind_speed: fc.wind_speed ?? fc.wind,
-      wind: fc.wind_speed ?? fc.wind,
-      precipitation_prob: fc.precipitation_prob,
-      sunrise: fc.sunrise,
+      conditions,
+      glyph: conditionToGlyph(conditions, fc.max_wind_mph),
+      temp: fc.avg_temp_f ?? null,
+      wind: fc.max_wind_mph ?? null,
+      precipitation_prob: fc.rain_chance ?? null,
+      is_bad_weather: fc.is_bad_weather,
+      summary: fc.summary,
+      sunrise: null,
     };
   }
   return out;

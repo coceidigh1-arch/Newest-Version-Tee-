@@ -245,8 +245,8 @@ export default function ScreenDesktop({ teeTimes = [], courses = [] }) {
               </div>
               <div style={{ display:'flex', alignItems:'center', gap: 6, fontSize: 11 }}>
                 <WxIcon kind={tt.wx} size={13} color="var(--forest-700)"/>
-                <span className="tnum">{tt.temp}°</span>
-                <span className="tnum" style={{ color:'var(--forest-600)' }}>{tt.wind}mph</span>
+                <span className="tnum">{tt.temp != null ? `${tt.temp}°` : "—"}</span>
+                <span className="tnum" style={{ color:'var(--forest-600)' }}>{tt.wind != null ? `${tt.wind}mph` : ""}</span>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap: 6 }}>
                 <SlotDots total={4} taken={4-tt.slotsLeft}/>
