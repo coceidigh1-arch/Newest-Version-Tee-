@@ -1,8 +1,11 @@
 // Server-side fetcher for the tee-time-bot FastAPI backend.
-// Pulls /slots + /courses and shapes them into the Fairway frontend's data model.
+// Pulls /slots + /courses + /api/weather, scores each slot with the real
+// scoring rules (ported in ./scoring.js), derives alerts from slots that
+// have been ALERTed/CONFIRMed/AUTOBOOKed, and shapes everything into the
+// Fairway frontend model.
 //
-// Falls back to the sample data in ./data.js when BACKEND_URL is unset or the
-// backend is unreachable — the mockup screens keep working offline.
+// Falls back to sample data when BACKEND_URL is unset or the backend is
+// unreachable — the mockup keeps rendering offline.
 
 import {
   COURSES as SAMPLE_COURSES,
@@ -10,8 +13,10 @@ import {
   ALERTS as SAMPLE_ALERTS,
   SNIPES as SAMPLE_SNIPES,
 } from "./data.js";
+import { DEFAULT_PREFS, scoreTeeTime } from "./scoring.js";
 
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "";
+const BACKEND_URL =
+  process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "";
 
 async function fetchJson(path, { revalidate = 60 } = {}) {
   if (!BACKEND_URL) return null;
@@ -25,50 +30,44 @@ async function fetchJson(path, { revalidate = 60 } = {}) {
 }
 
 const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const DAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function dayFromISODate(iso) {
-  const d = new Date(`${iso}T00:00:00`);
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00:00Z`);
   return DAY_NAMES[d.getUTCDay()] || "";
 }
 
-function pickWx(slot) {
-  // Derive a weather glyph from slot.temp/wind if the backend ever attaches them.
-  // For now use sun as a default.
-  if (slot.temp != null && slot.temp < 50) return "cloud";
-  if (slot.wind != null && slot.wind > 12) return "wind";
+function formatHumanDate(iso) {
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00:00Z`);
+  return `${DAY_LONG[d.getUTCDay()]} ${MONTH_SHORT[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+// Weather-code → Fairway wx glyph (open-meteo WMO codes)
+function wmoToGlyph(code) {
+  if (code == null) return "sun";
+  if (code === 0 || code === 1) return "sun";
+  if (code === 2 || code === 3) return "cloud";
+  if (code >= 45 && code <= 48) return "cloud";
+  if (code >= 51 && code <= 67) return "drizzle";
+  if (code >= 71 && code <= 77) return "drizzle";
+  if (code >= 80 && code <= 82) return "drizzle";
+  if (code >= 95 && code <= 99) return "wind";
   return "sun";
 }
 
-function sunriseForDate(/* iso */) {
-  return "06:12";
-}
-
-// Heuristic score (0-100) when backend score is 0 (unseeded).
-function heuristicScore(slot, course) {
-  let score = 0;
-  // Tier
-  const tier = course?.tier || "B";
-  score += tier === "A+" ? 28 : tier === "A" ? 20 : tier === "A-" ? 15 : 10;
-  // Day: weekends get bonus
-  const day = dayFromISODate(slot.date);
-  score += day === "SAT" || day === "SUN" ? 18 : day === "FRI" ? 10 : 5;
-  // Time: early morning = prime
-  const [h, m] = (slot.time || "00:00").split(":").map(Number);
-  const mins = h * 60 + (m || 0);
-  if (mins >= 330 && mins <= 480) score += 18;       // 5:30–8:00
-  else if (mins >= 300 && mins <= 600) score += 10;  // 5:00–10:00
-  else score += 3;
-  // Price: lower = better
-  const p = Number(slot.price || 0);
-  if (p === 0) score += 10;
-  else if (p <= 80) score += 15;
-  else if (p <= 120) score += 10;
-  else if (p <= 160) score += 6;
-  else score += 2;
-  // Players
-  const avail = Number(slot.players_available || 4);
-  score += avail >= 4 ? 8 : avail >= 2 ? 5 : 2;
-  return Math.min(100, Math.max(0, score));
+function approxSunriseForMonth(iso) {
+  // Chicago-ish sunrise approximation. Only used as a fallback when weather
+  // doesn't include sunrise data.
+  const month = iso ? Number(iso.slice(5, 7)) : 4;
+  const table = {
+    1: "07:18", 2: "07:02", 3: "06:30", 4: "05:45", 5: "05:20",
+    6: "05:15", 7: "05:25", 8: "05:55", 9: "06:25", 10: "07:00",
+    11: "06:35", 12: "07:10",
+  };
+  return table[month] || "06:15";
 }
 
 function deriveSignals(slot, course, score) {
@@ -77,43 +76,54 @@ function deriveSignals(slot, course, score) {
   else if (score >= 82 && course?.tier === "A+") out.push("prime");
   const p = Number(slot.price || 0);
   if (p > 0 && p <= 75) out.push("deal");
-  if ((slot.players_available || 0) === 4 && course?.tier === "A+") out.push("rare");
+  if ((slot.players_available || 0) === 4 && course?.tier === "A+" && score >= 80) out.push("rare");
   return out;
 }
 
-function deriveReason(slot, course, score) {
+function deriveReason(slot, course, score, prefs) {
   const bits = [];
-  if (course?.tier === "A+") bits.push("A+ course");
+  if ((prefs.must_play_courses || []).includes(slot.course_id)) {
+    bits.push("Must-play course");
+  } else if (course?.tier === "A+") {
+    bits.push("A+ tier");
+  }
   const p = Number(slot.price || 0);
-  if (p > 0 && p <= 75) bits.push(`$${p} — under typical`);
+  const max = Number(prefs.max_price || 150);
+  if (p > 0 && p <= max * 0.7) bits.push(`$${Math.round(p)} — ${Math.round(max - p)} under max`);
+  else if (p > 0 && p <= max) bits.push(`$${Math.round(p)} — under budget`);
   const [h] = (slot.time || "06:00").split(":").map(Number);
   if (h <= 7) bits.push("prime early window");
   if (!bits.length) bits.push(`Score ${score}/100`);
   return bits.join(" · ");
 }
 
-function transformCourse(c, i) {
+function transformCourse(c) {
   return {
     id: c.id,
     name: c.name,
-    short: c.tier ? `${c.tier} · ${c.platform}` : c.platform,
+    short: c.notes ? c.notes.split(".")[0].slice(0, 60) : `${c.tier || "B"} · ${c.platform}`,
     tier: c.tier || "B",
     city: c.city || "Chicago area",
     distance: c.distance_miles ?? 0,
     dir: c.direction || "",
     platform: (c.platform || "").replace(/^./, (ch) => ch.toUpperCase()),
+    risk_tier: c.risk_tier || "medium",
+    booking_url: c.booking_url,
+    direct_url: c.direct_url,
+    autobook_eligible: c.autobook_eligible,
   };
 }
 
-function transformSlot(slot, courseById, rank) {
+function transformSlot(slot, courseById, rank, weatherByDate, prefs) {
   const course = courseById[slot.course_id];
-  const backendScore = Number(slot.score || 0);
-  const score = backendScore > 0 ? backendScore : heuristicScore(slot, course);
+  const score = scoreTeeTime(slot, prefs, course || {});
+  const wx = weatherByDate?.[slot.date] || {};
   return {
     id: slot.id,
     course: slot.course_id,
     date: slot.date,
     day: dayFromISODate(slot.date),
+    humanDate: formatHumanDate(slot.date),
     time: slot.time,
     price: Math.round(Number(slot.price || 0)),
     players: slot.players_available ?? 4,
@@ -121,52 +131,167 @@ function transformSlot(slot, courseById, rank) {
     score,
     rank,
     signals: deriveSignals(slot, course, score),
-    wx: pickWx(slot),
-    temp: slot.temp ?? 58,
-    wind: slot.wind ?? 6,
-    sunrise: sunriseForDate(slot.date),
-    reason: deriveReason(slot, course, score),
+    wx: wx.glyph || wmoToGlyph(wx.code),
+    temp: wx.temp_high ?? wx.temp ?? null,
+    wind: wx.wind_speed ?? wx.wind ?? null,
+    precip: wx.precipitation_prob ?? null,
+    sunrise: wx.sunrise || approxSunriseForMonth(slot.date),
+    reason: deriveReason(slot, course, score, prefs),
     booking_url: slot.booking_url,
     source: slot.source,
     action: slot.action,
+    alerted_at: slot.alerted_at,
+    booked_at: slot.booked_at,
+    first_seen_at: slot.first_seen_at,
   };
+}
+
+async function fetchWeatherForDates(dates) {
+  if (!dates?.length) return {};
+  const unique = [...new Set(dates)].filter(Boolean).sort();
+  if (!unique.length) return {};
+  const data = await fetchJson(
+    `/api/weather?dates=${encodeURIComponent(unique.join(","))}`
+  );
+  const forecasts = data?.forecasts || {};
+  const out = {};
+  for (const [date, fc] of Object.entries(forecasts)) {
+    if (!fc) continue;
+    out[date] = {
+      code: fc.weather_code,
+      glyph: wmoToGlyph(fc.weather_code),
+      temp_high: fc.temp_high,
+      temp_low: fc.temp_low,
+      temp: fc.temp_high ?? fc.temp,
+      wind_speed: fc.wind_speed ?? fc.wind,
+      wind: fc.wind_speed ?? fc.wind,
+      precipitation_prob: fc.precipitation_prob,
+      sunrise: fc.sunrise,
+    };
+  }
+  return out;
+}
+
+function slotsToAlerts(rawSlots, courseById, scoredMap) {
+  const events = [];
+  for (const s of rawSlots) {
+    if (!s.alerted_at && !s.booked_at) continue;
+    const scored = scoredMap[s.id] || {};
+    const course = courseById[s.course_id];
+    if (!course) continue;
+    const ts = s.booked_at || s.alerted_at;
+    let kind = "new";
+    if (s.booked_at) kind = "snipe";
+    else if (scored.signals?.includes("deal")) kind = "deal";
+    else if (scored.signals?.includes("rare")) kind = "rare";
+    else if (scored.signals?.includes("prime")) kind = "new";
+
+    const title =
+      s.booked_at ? "Autobook confirmed"
+      : kind === "deal" ? "Price drop"
+      : kind === "rare" ? "Rare window opened"
+      : "New PRIME match";
+
+    events.push({
+      id: `a-${s.id}`,
+      kind,
+      title,
+      course: course.name,
+      time: `${scored.humanDate || formatHumanDate(s.date)} · ${s.time}`,
+      body: scored.reason || `Score ${scored.score || 0}/100`,
+      age: ageFromTimestamp(ts),
+      ageTs: ts,
+      state: s.booked_at ? "success" : undefined,
+    });
+  }
+  events.sort((a, b) => (b.ageTs || "").localeCompare(a.ageTs || ""));
+  return events.slice(0, 25);
+}
+
+function ageFromTimestamp(ts) {
+  if (!ts) return "";
+  const d = new Date(ts.replace(" ", "T") + "Z");
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d`;
 }
 
 export async function getCourses() {
   const data = await fetchJson("/courses");
   const raw = Array.isArray(data?.courses) ? data.courses : null;
-  if (!raw || !raw.length) return SAMPLE_COURSES;
+  if (!raw?.length) return SAMPLE_COURSES;
   return raw.map(transformCourse);
 }
 
-export async function getTeeTimes({ limit = 30 } = {}) {
+// Returns: { teeTimes, courses, weather, alerts, isSample, openSlotsByCourse }
+export async function getDashboardData({ prefs = DEFAULT_PREFS, limit = 20 } = {}) {
   const [coursesData, slotsData] = await Promise.all([
     fetchJson("/courses"),
-    fetchJson(`/slots?limit=${limit * 3}`),
+    fetchJson(`/slots?limit=300`),
   ]);
   const coursesRaw = Array.isArray(coursesData?.courses) ? coursesData.courses : [];
   const slotsRaw = Array.isArray(slotsData?.slots) ? slotsData.slots : [];
-  if (!slotsRaw.length) return { teeTimes: SAMPLE_TEE_TIMES, isSample: true };
+
+  if (!coursesRaw.length || !slotsRaw.length) {
+    return {
+      teeTimes: SAMPLE_TEE_TIMES,
+      courses: SAMPLE_COURSES,
+      alerts: SAMPLE_ALERTS,
+      openSlotsByCourse: {},
+      isSample: true,
+    };
+  }
 
   const courses = coursesRaw.map(transformCourse);
   const courseById = Object.fromEntries(courses.map((c) => [c.id, c]));
 
-  const shaped = slotsRaw
-    .map((s, i) => transformSlot(s, courseById, i + 1))
-    .filter((s) => courseById[s.course])
-    .sort((a, b) => b.score - a.score || a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+  // Fetch weather for the dates we actually have slots on.
+  const slotDates = [...new Set(slotsRaw.map((s) => s.date))].slice(0, 14);
+  const weatherByDate = await fetchWeatherForDates(slotDates);
+
+  // Score + shape every slot, then keep the top `limit`.
+  const allScored = slotsRaw
+    .map((s) => transformSlot(s, courseById, 0, weatherByDate, prefs))
+    .filter((s) => courseById[s.course]);
+
+  const scoredMap = Object.fromEntries(allScored.map((s) => [s.id, s]));
+
+  const teeTimes = [...allScored]
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.date.localeCompare(b.date) ||
+        a.time.localeCompare(b.time)
+    )
     .slice(0, limit)
     .map((s, i) => ({ ...s, rank: i + 1 }));
 
-  return { teeTimes: shaped, isSample: false };
+  // Open slot count per course (all upcoming, not just top-scored).
+  const openSlotsByCourse = {};
+  for (const s of allScored) {
+    openSlotsByCourse[s.course] = (openSlotsByCourse[s.course] || 0) + 1;
+  }
+
+  const alerts = slotsToAlerts(slotsRaw, courseById, scoredMap);
+
+  return {
+    teeTimes,
+    courses,
+    alerts: alerts.length ? alerts : SAMPLE_ALERTS,
+    openSlotsByCourse,
+    weatherByDate,
+    isSample: false,
+  };
 }
 
-export async function getDashboardData() {
-  const [{ teeTimes, isSample }, courses] = await Promise.all([
-    getTeeTimes({ limit: 12 }),
-    getCourses(),
-  ]);
-  return { teeTimes, courses, isSample };
+// Kept for backwards-compat with pages that only need tee times.
+export async function getTeeTimes({ limit = 20 } = {}) {
+  const d = await getDashboardData({ limit });
+  return { teeTimes: d.teeTimes, isSample: d.isSample };
 }
 
-export { SAMPLE_ALERTS as ALERTS, SAMPLE_SNIPES as SNIPES };
+export { SAMPLE_SNIPES as SNIPES };

@@ -1,6 +1,5 @@
 "use client";
 import { Icon } from "@/components/primitives";
-import { ALERTS } from "@/lib/data";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 
@@ -10,15 +9,17 @@ const kindStyle = k => ({
   deal:    { accent:'var(--signal-amber)', glyph:'dollar' },
   rare:    { accent:'var(--signal-red)', glyph:'flag' },
   digest:  { accent:'var(--forest-600)', glyph:'clock' },
-}[k]);
+}[k] || { accent:'var(--forest-600)', glyph:'bell' });
 
-export default function ScreenAlerts() {
+export default function ScreenAlerts({ alerts = [] }) {
+  const ALERTS = alerts;
+  const unreadCount = Math.min(3, alerts.length);
   return (
     <div style={{ background: cream, minHeight:'100%', fontFamily:'var(--f-ui)', paddingBottom: 120 }}>
       <div style={{ paddingTop: 58, padding:'58px 20px 10px', display:'flex', alignItems:'center' }}>
         <div className="eyebrow">Signals</div>
         <div style={{ flex: 1 }}/>
-        <div className="tnum" style={{ fontSize:11, color:'var(--forest-600)' }}>3 unread</div>
+        <div className="tnum" style={{ fontSize:11, color:'var(--forest-600)' }}>{unreadCount} unread</div>
       </div>
 
       <div style={{ padding:'6px 20px 20px' }}>
@@ -44,9 +45,14 @@ export default function ScreenAlerts() {
       </div>
 
       <div style={{ padding:'0 20px' }}>
+        {ALERTS.length === 0 && (
+          <div style={{ padding: '40px 0', fontSize: 13, color:'var(--forest-600)' }}>
+            Quiet — no new signals in the last 24 hours.
+          </div>
+        )}
         {ALERTS.map((a,i)=>{
           const st = kindStyle(a.kind);
-          const unread = i < 3;
+          const unread = i < unreadCount;
           return (
             <div key={a.id} style={{
               position:'relative',

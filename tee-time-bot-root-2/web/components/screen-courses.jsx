@@ -3,7 +3,7 @@ import { TierChip, Sparkline, Icon } from "@/components/primitives";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 
-export default function ScreenCourses({ courses = [] }) {
+export default function ScreenCourses({ courses = [], openSlotsByCourse = {} }) {
   const COURSES = courses;
   return (
     <div style={{ background: cream, minHeight:'100%', fontFamily:'var(--f-ui)', paddingBottom: 120 }}>
@@ -59,7 +59,7 @@ export default function ScreenCourses({ courses = [] }) {
                 <div style={{ fontSize: 15, fontWeight: 500, color: forest }}>{c.name}</div>
               </div>
               <div style={{ fontSize: 11, color:'var(--forest-600)' }}>
-                {c.city} · {c.distance}mi {c.dir} · <span className="tnum">{[3,5,2,8,4,1,6,2][i%8]}</span> open slots this week
+                {c.city} · {c.distance}mi {c.dir} · <span className="tnum">{openSlotsByCourse[c.id] ?? 0}</span> open slots
               </div>
             </div>
             <Sparkline points={[3,5,2,6,4,7,3,5,6,4].map(v=>v+i)} width={56} height={18}/>

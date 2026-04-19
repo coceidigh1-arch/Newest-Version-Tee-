@@ -1,6 +1,5 @@
 "use client";
 import { SectionLabel, Icon } from "@/components/primitives";
-import { SNIPES } from "@/lib/data";
 
 const cream='#F4EFE4', forest='#0E2A1F';
 const stateMap = {
@@ -9,7 +8,8 @@ const stateMap = {
   booked:   { label:'BOOKED',    color:'var(--forest-700)' },
 };
 
-export default function ScreenSnipe() {
+export default function ScreenSnipe({ snipes = [] }) {
+  const SNIPES = snipes;
   return (
     <div style={{ background: cream, minHeight:'100%', fontFamily:'var(--f-ui)', paddingBottom: 120 }}>
       <div style={{ paddingTop: 58, padding:'58px 20px 6px' }}>
@@ -32,7 +32,16 @@ export default function ScreenSnipe() {
         </button>
       </div>
 
-      <SectionLabel extra={<span className="tnum">4 active</span>}>Queue</SectionLabel>
+      <SectionLabel extra={<span className="tnum">{SNIPES.length} active</span>}>Queue</SectionLabel>
+
+      {SNIPES.length === 0 && (
+        <div style={{ padding:'30px 20px', fontSize: 13, color:'var(--forest-600)', lineHeight: 1.55 }}>
+          No snipes yet. Create one via the Telegram bot and it&apos;ll appear here.
+          <div style={{ marginTop: 12, fontSize: 12, color:'var(--forest-300)' }}>
+            Use <span className="mono" style={{ color: forest }}>/snipe</span> in the bot.
+          </div>
+        </div>
+      )}
 
       <div style={{ padding:'0 20px' }}>
         {SNIPES.map(s => {
