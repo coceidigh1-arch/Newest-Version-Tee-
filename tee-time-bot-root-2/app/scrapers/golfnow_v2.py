@@ -30,6 +30,10 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
+class GolfNowAPIError(RuntimeError):
+    """Raised when GolfNow returns an HTTP failure for a configured facility."""
+
+
 def _format_api_date(date_str: str) -> str:
     """Convert YYYY-MM-DD to 'Apr 19 2026' format for GolfNow API."""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -41,6 +45,7 @@ async def search_golfnow_facility(
     course_id: str,
     date: str,
     players: int = 4,
+    raise_on_error: bool = False,
 ) -> list[dict]:
     """Search GolfNow API for tee times at a specific facility."""
     slots = []
@@ -75,7 +80,10 @@ async def search_golfnow_facility(
             )
 
             if response.status_code != 200:
-                logger.error("GolfNow API %s: HTTP %d", course_id, response.status_code)
+                msg = f"GolfNow API {course_id}: HTTP {response.status_code}"
+                if raise_on_error:
+                    raise GolfNowAPIError(msg)
+                logger.warning(msg)
                 return []
 
             data = response.json()
@@ -139,9 +147,16 @@ async def search_golfnow_facility(
 
             logger.info("GolfNow API: %s on %s -> %d slots", course_id, date, len(slots))
 
-    except httpx.TimeoutException:
-        logger.error("GolfNow API timeout for %s on %s", course_id, date)
+    except GolfNowAPIError:
+        raise
+    except httpx.TimeoutException as exc:
+        msg = f"GolfNow API timeout for {course_id} on {date}"
+        if raise_on_error:
+            raise GolfNowAPIError(msg) from exc
+        logger.error(msg)
     except Exception as e:
+        if raise_on_error:
+            raise
         logger.error("GolfNow API error for %s: %s", course_id, str(e))
 
     return slots

@@ -474,6 +474,33 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slots, [])
         self.assertIn("boom", err)
 
+    async def test_dispatcher_treats_golfnow_http_failures_as_errors(self):
+        """GolfNow HTTP failures are not the same thing as no availability.
+        The scanner should surface them as errors instead of marking stale rows gone."""
+        from app.services.scrape_dispatch import dispatch_scan, ScanStatus
+
+        async def fake_search(facility_id, course_id, date, players=4, raise_on_error=False):
+            self.assertTrue(raise_on_error)
+            raise RuntimeError("GolfNow API coyote_run: HTTP 404")
+
+        with patch("app.services.scrape_dispatch.search_golfnow_facility", new=fake_search):
+            slots, status, err = await dispatch_scan("coyote_run", "2026-04-20")
+
+        self.assertEqual(status, ScanStatus.ERROR)
+        self.assertEqual(slots, [])
+        self.assertIn("HTTP 404", err)
+
+    def test_pine_meadow_uses_foreup_booking_config(self):
+        from app.models.courses import COURSES
+        from app.scrapers.foreup import FOREUP_CONFIGS
+
+        course = COURSES["pine_meadow"]
+        self.assertEqual(course["platform"], "foreup")
+        self.assertIn("booking/23086", course["booking_url"])
+        self.assertIsNone(course["golfnow_facility_id"])
+        self.assertEqual(FOREUP_CONFIGS["pine_meadow"]["booking_class"], "52398")
+        self.assertEqual(FOREUP_CONFIGS["pine_meadow"]["schedule_ids"], ["12762"])
+
     async def test_course_week_surfaces_scan_status_per_day(self):
         """The /api/course/{id}/week endpoint must distinguish a day with no
         availability from a day where the scanner failed. Previously both

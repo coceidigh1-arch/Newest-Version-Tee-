@@ -36,6 +36,10 @@ FOREUP_CONFIGS = {
         "booking_class": "6838",
         "schedule_ids": ["6838"],
     },
+    "pine_meadow": {
+        "booking_class": "52398",
+        "schedule_ids": ["12762"],
+    },
 }
 
 

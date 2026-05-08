@@ -508,7 +508,7 @@ var C = {
   links_carillon:{n:"Links at Carillon",t:"A",d:34,adv:7,s:"ezlinks",u:"https://carillon.ezlinksgolf.com/index.html#/search",avg:60},
   lost_marsh:{n:"Lost Marsh GC",t:"A",d:25,adv:7,s:"direct",u:"https://www.lostmarshgolf.com/teetimes/",avg:55},
   makray:{n:"Makray Memorial",t:"A",d:38,adv:7,s:"golfnow",u:"https://www.golfnow.com/tee-times/facility/847-makray-memorial-golf-club/search",avg:80},
-  pine_meadow:{n:"Pine Meadow GC",t:"A",d:41,adv:7,s:"golfnow",u:"https://www.golfnow.com/tee-times/facility/3300-pine-meadow/search",avg:60},
+  pine_meadow:{n:"Pine Meadow GC",t:"A",d:41,adv:7,s:"foreup",u:"https://foreupsoftware.com/index.php/booking/23086#/teetimes",avg:60},
   prairie_bluff:{n:"Prairie Bluff GC",t:"A-",d:36,adv:7,s:"chronogolf",u:"https://www.chronogolf.com/club/prairie-bluff-golf-club",avg:65},
   ruffled_feathers:{n:"Ruffled Feathers GC",t:"A",d:28,adv:7,s:"golfnow",u:"https://www.golfnow.com/tee-times/facility/945-ruffled-feathers-golf-club/search",avg:70},
   st_andrews:{n:"St. Andrews GC",t:"A",d:37,adv:7,s:"teeitup",u:"https://st-andrews-golf-club-chicago-v2.book.teeitup.com/?course=3299,5038",avg:50},

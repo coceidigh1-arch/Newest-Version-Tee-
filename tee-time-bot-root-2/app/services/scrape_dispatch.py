@@ -58,7 +58,7 @@ async def _scan_golfnow(course_id: str, date: str, players: int) -> list[dict]:
     if not facility_id:
         # Surface this as CONFIG_MISSING at the dispatcher layer
         raise _ConfigMissing("golfnow_facility_id not set in courses.py")
-    return await search_golfnow_facility(facility_id, course_id, date, players)
+    return await search_golfnow_facility(facility_id, course_id, date, players, raise_on_error=True)
 
 
 async def _scan_direct(course_id: str, date: str, players: int) -> list[dict]:

@@ -499,10 +499,10 @@ COURSES = {
     },
     "pine_meadow": {
         "name": "Pine Meadow Golf Course",
-        "tier": "A", "platform": "golfnow",
-        "booking_url": "https://www.golfnow.com/tee-times/facility/3300-pine-meadow/search",
+        "tier": "A", "platform": "foreup",
+        "booking_url": "https://foreupsoftware.com/index.php/booking/23086#/teetimes",
         "direct_url": "https://www.pinemeadowgc.com",
-        "golfnow_facility_id": "3300",
+        "golfnow_facility_id": None,
         "phone": "(847) 566-4653",
         "distance_miles": 41, "direction": "N",
         "advance_booking_days": 7, "has_range": True, "range_included": False,
