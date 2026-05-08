@@ -142,6 +142,7 @@ async def run_scan_cycle():
                         db, course_id, platform, status,
                         len(slots), len(new), started_at, err, search_date=date,
                     )
+                    await db.commit()
 
                     # Rate-limit polite pause, but only for platforms that
                     # actually hit the network. UNSUPPORTED/CONFIG_MISSING are
