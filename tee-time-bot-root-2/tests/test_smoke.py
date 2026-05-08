@@ -195,6 +195,42 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
             response = await client.get("/api/course/not-a-real-course/week")
         self.assertEqual(response.status_code, 404)
 
+    async def test_slots_time_filter_applies_before_limit(self):
+        """Search time ranges must be handled by the API before LIMIT. Otherwise a
+        busy morning can fill the first page and make 11am-5pm look empty."""
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Chicago")
+        except Exception:
+            import pytz
+            tz = pytz.timezone("America/Chicago")
+        today = datetime.now(tz).date().strftime("%Y-%m-%d")
+
+        db = await get_db()
+        try:
+            for i in range(30):
+                await db.execute(
+                    "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                    "VALUES (?, 'bolingbrook', ?, '07:00', 80, 'https://book/morning')",
+                    (f"morning-{i}", today),
+                )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, price, booking_url) "
+                "VALUES ('afternoon-1', 'bolingbrook', ?, '12:30', 90, 'https://book/afternoon')",
+                (today,),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/slots?date="+today+"&time_min=11:00&time_max=17:00&limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([s["time"] for s in body["slots"]], ["12:30"])
+
     async def test_dashboard_page_renders(self):
         """Sanity check: /dashboard returns a complete HTML page with the key shell
         elements. Guards against the single-string template regressing in obvious ways."""

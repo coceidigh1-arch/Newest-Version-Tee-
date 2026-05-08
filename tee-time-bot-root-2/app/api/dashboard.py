@@ -626,6 +626,8 @@ function fetchAll(){
   P.loading=true;R();
   var url="/slots?min_score=0&limit=500";
   if(P.course) url+="&course_id="+P.course;
+  if(P.timeMin) url+="&time_min="+encodeURIComponent(P.timeMin);
+  if(P.timeMax) url+="&time_max="+encodeURIComponent(P.timeMax);
   api(url).then(function(d){
     P.slots=(d&&d.slots)?d.slots:[];P.loading=false;
     var dates={};P.slots.forEach(function(s){if(s.date)dates[s.date]=1});
@@ -637,6 +639,8 @@ function fetchSearch(){
   var url="/slots?min_score=0&limit=500";
   if(P.searchCourse) url+="&course_id="+P.searchCourse;
   if(P.date) url+="&date="+P.date;
+  if(P.timeMin) url+="&time_min="+encodeURIComponent(P.timeMin);
+  if(P.timeMax) url+="&time_max="+encodeURIComponent(P.timeMax);
   api(url).then(function(d){
     P.searchSlots=(d&&d.slots)?d.slots:[];P.loading=false;
     var dates={};P.searchSlots.forEach(function(s){if(s.date)dates[s.date]=1});
@@ -769,10 +773,26 @@ function courseOptions(sel){
 function filterSlots(slots){
   return slots.filter(function(s){
     if(P.players && s.players_available && s.players_available<P.players) return false;
-    if(s.time && s.time<P.timeMin) return false;
-    if(s.time && s.time>P.timeMax) return false;
+    if(!timeInRange(s.time,P.timeMin,P.timeMax)) return false;
     return true;
   });
+}
+function timeMinutes(t){
+  if(!t)return null;
+  var m=String(t).trim().match(/^(\d{1,2}):(\d{2})\s*([AP]M)?$/i);
+  if(!m)return null;
+  var h=parseInt(m[1],10), min=parseInt(m[2],10), ap=m[3]&&m[3].toUpperCase();
+  if(ap==="PM" && h<12) h+=12;
+  if(ap==="AM" && h===12) h=0;
+  if(h<0||h>23||min<0||min>59)return null;
+  return h*60+min;
+}
+function timeInRange(t,min,max){
+  var v=timeMinutes(t), lo=timeMinutes(min), hi=timeMinutes(max);
+  if(v==null)return true;
+  if(lo!=null && v<lo)return false;
+  if(hi!=null && v>hi)return false;
+  return true;
 }
 function slotCard(s){
   var c=C[s.course_id]||{n:s.course_id,t:""};
@@ -955,9 +975,9 @@ function rWknd(){
   h+='<div class="row" style="margin-bottom:12px"><div style="flex:2">' +
        '<div class="label">Players</div>'+segmentedPlayers()+'</div>' +
      '<div style="flex:1.2"><div class="label">Earliest</div>' +
-       '<select class="select" onchange="P.timeMin=this.value;R()">'+timeOptions(P.timeMin)+'</select></div>' +
+       '<select class="select" onchange="P.timeMin=this.value;fetchAll()">'+timeOptions(P.timeMin)+'</select></div>' +
      '<div style="flex:1.2"><div class="label">Latest</div>' +
-       '<select class="select" onchange="P.timeMax=this.value;R()">'+timeOptions(P.timeMax)+'</select></div></div>';
+       '<select class="select" onchange="P.timeMax=this.value;fetchAll()">'+timeOptions(P.timeMax)+'</select></div></div>';
 
   if(P.loading) return h+skeletonBlock(6);
 

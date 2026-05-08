@@ -347,6 +347,8 @@ async def unlink_platform_account(user_id: str, platform: str, request: Request)
 async def list_slots(
     course_id: str | None = None,
     date: str | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     min_score: int = 0,
     action: str | None = None,
     limit: int = Query(default=500, le=1000),
@@ -363,6 +365,12 @@ async def list_slots(
         if date:
             query += " AND date = ?"
             params.append(date)
+        if time_min:
+            query += " AND time >= ?"
+            params.append(time_min)
+        if time_max:
+            query += " AND time <= ?"
+            params.append(time_max)
         if action:
             query += " AND action = ?"
             params.append(action)
