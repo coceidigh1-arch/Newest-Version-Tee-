@@ -9,7 +9,7 @@ from app.config import settings
 import app.models.database as db_module
 from app.models.database import init_db, get_db
 from app.api.routes import app
-from app.services.scanner import _process_slots
+from app.services.scanner import _mark_missing_slots_disappeared, _process_slots
 from app.services.telegram_handler import _handle_skip
 from httpx import ASGITransport, AsyncClient
 
@@ -96,6 +96,65 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
             await db.close()
         self.assertEqual(first["status"], "SKIPPED")
         self.assertEqual(second["status"], "SENT")
+
+    async def test_scanner_marks_missing_slots_disappeared_after_fresh_scan(self):
+        """When a provider no longer returns a slot for a course/date, hide the
+        cached row immediately instead of showing stale availability."""
+        from app.services.scoring import generate_slot_id
+
+        db = await get_db()
+        keep_id = generate_slot_id("bolingbrook", "2026-05-09", "14:00")
+        stale_id = generate_slot_id("bolingbrook", "2026-05-09", "14:10")
+        other_course_id = generate_slot_id("harborside", "2026-05-09", "14:10")
+        try:
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time) VALUES (?, 'bolingbrook', '2026-05-09', '14:00')",
+                (keep_id,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time) VALUES (?, 'bolingbrook', '2026-05-09', '14:10')",
+                (stale_id,),
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time) VALUES (?, 'harborside', '2026-05-09', '14:10')",
+                (other_course_id,),
+            )
+
+            count = await _mark_missing_slots_disappeared(
+                db,
+                "bolingbrook",
+                "2026-05-09",
+                [{"course_id": "bolingbrook", "date": "2026-05-09", "time": "14:00"}],
+            )
+            await db.commit()
+
+            keep = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = ?", (keep_id,))
+            stale = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = ?", (stale_id,))
+            other = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = ?", (other_course_id,))
+        finally:
+            await db.close()
+
+        self.assertEqual(count, 1)
+        self.assertIsNone(keep["disappeared_at"])
+        self.assertIsNotNone(stale["disappeared_at"])
+        self.assertIsNone(other["disappeared_at"])
+
+    async def test_scanner_empty_scan_marks_course_date_slots_disappeared(self):
+        db = await get_db()
+        try:
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time) VALUES ('slot-gone', 'bolingbrook', '2026-05-09', '14:00')"
+            )
+
+            count = await _mark_missing_slots_disappeared(db, "bolingbrook", "2026-05-09", [])
+            await db.commit()
+
+            row = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = 'slot-gone'")
+        finally:
+            await db.close()
+
+        self.assertEqual(count, 1)
+        self.assertIsNotNone(row["disappeared_at"])
 
     async def test_webhook_secret_validation(self):
         settings.TELEGRAM_WEBHOOK_SECRET = "secret123"

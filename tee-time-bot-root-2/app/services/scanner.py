@@ -131,10 +131,12 @@ async def run_scan_cycle():
                             logger.exception("_process_slots failed for %s/%s", course_id, date)
                             status = ScanStatus.ERROR
                             err = f"_process_slots: {exc}"
-                        all_new_slots.extend(new)
-                        scan_summary["slots_found"] += len(slots)
-                        scan_summary["new_slots"] += len(new)
-                        scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
+                    if status in (ScanStatus.OK, ScanStatus.EMPTY):
+                        await _mark_missing_slots_disappeared(db, course_id, date, slots)
+                    all_new_slots.extend(new)
+                    scan_summary["slots_found"] += len(slots)
+                    scan_summary["new_slots"] += len(new)
+                    scan_summary["alerts_sent"] += sum(1 for slot in new if slot.get("alerts_sent", 0))
 
                     await _log_search(
                         db, course_id, platform, status,
@@ -165,6 +167,40 @@ async def run_scan_cycle():
             )
         finally:
             await db.close()
+
+
+async def _mark_missing_slots_disappeared(db, course_id: str, date: str, current_slots: list[dict]) -> int:
+    """Mark cached slots gone once a successful scan no longer returns them."""
+    current_ids = {
+        generate_slot_id(slot["course_id"], slot["date"], slot["time"])
+        for slot in current_slots
+        if slot.get("course_id") and slot.get("date") and slot.get("time")
+    }
+
+    params: list = [course_id, date]
+    query = """
+        UPDATE seen_slots
+           SET disappeared_at = datetime('now')
+         WHERE course_id = ?
+           AND date = ?
+           AND disappeared_at IS NULL
+           AND COALESCE(action, '') NOT IN ('BOOKED', 'CONFIRMED')
+    """
+    if current_ids:
+        placeholders = ",".join("?" for _ in current_ids)
+        query += f" AND id NOT IN ({placeholders})"
+        params.extend(sorted(current_ids))
+
+    cursor = await db.execute(query, params)
+    count = cursor.rowcount if cursor.rowcount is not None else 0
+    if count:
+        logger.info(
+            "Marked %d disappeared slots for %s on %s after fresh scan",
+            count,
+            course_id,
+            date,
+        )
+    return count
 
 
 async def _process_slots(db, slots: list[dict], users: list[dict], prefs_by_user: dict[str, dict], suppressions: list[dict]) -> list[dict]:
