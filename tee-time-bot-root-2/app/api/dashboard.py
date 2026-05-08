@@ -550,9 +550,30 @@ var P = {
 /* ==========================================================================
    Utility helpers
    ========================================================================== */
-function today(){return new Date().toISOString().split("T")[0]}
-function nsat(){var d=new Date();d.setDate(d.getDate()+((6-d.getDay())%7||7));return d.toISOString().split("T")[0]}
-function nowTime(){var d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
+function chicagoParts(d,opts){
+  var out={};
+  new Intl.DateTimeFormat("en-US",Object.assign({timeZone:"America/Chicago"},opts||{})).formatToParts(d).forEach(function(p){
+    if(p.type!=="literal")out[p.type]=p.value;
+  });
+  return out;
+}
+function chicagoDate(d){
+  var p=chicagoParts(d,{year:"numeric",month:"2-digit",day:"2-digit"});
+  return p.year+"-"+p.month+"-"+p.day;
+}
+function today(){return chicagoDate(new Date())}
+function nsat(){
+  var d=new Date();
+  var wd=chicagoParts(d,{weekday:"short"}).weekday;
+  var n={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[wd];
+  if(n==null)n=d.getDay();
+  d.setDate(d.getDate()+((6-n)%7||7));
+  return chicagoDate(d);
+}
+function nowTime(){
+  var p=chicagoParts(new Date(),{hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+  return p.hour+":"+p.minute;
+}
 function fd(d){if(!d)return "";return new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}
 function ft(t){
   if(!t||t.indexOf(":")<0)return t||"";
@@ -587,6 +608,13 @@ function api(u,o){
   opts.headers=h;
   return fetch(API+u,opts).then(function(r){return r.json()}).catch(function(){return null});
 }
+function slotHasPlayers(s,minPlayers){
+  if(!minPlayers)return true;
+  var raw=s?s.players_available:null;
+  if(raw===null||raw===undefined||raw==="")return true;
+  var n=parseInt(raw,10);
+  return isNaN(n)||n>=minPlayers;
+}
 
 /* ==========================================================================
    Fetchers
@@ -601,7 +629,7 @@ function loadWeather(dates){
 }
 function fetchNow(){
   P.loading=true;R();
-  api("/slots?min_score=0&limit=500&date="+today()).then(function(d){
+  api("/slots?min_score=0&limit=500&date="+today()+"&min_players="+encodeURIComponent(P.players)).then(function(d){
     var all=(d&&d.slots)?d.slots:[];var cur=nowTime();
     P.nowSlots=all.filter(function(s){return s.time && s.time>=cur})
                   .sort(function(a,b){return(a.time||"").localeCompare(b.time||"")});
@@ -628,6 +656,7 @@ function fetchAll(){
   if(P.course) url+="&course_id="+P.course;
   if(P.timeMin) url+="&time_min="+encodeURIComponent(P.timeMin);
   if(P.timeMax) url+="&time_max="+encodeURIComponent(P.timeMax);
+  if(P.players) url+="&min_players="+encodeURIComponent(P.players);
   api(url).then(function(d){
     P.slots=(d&&d.slots)?d.slots:[];P.loading=false;
     var dates={};P.slots.forEach(function(s){if(s.date)dates[s.date]=1});
@@ -641,6 +670,7 @@ function fetchSearch(){
   if(P.date) url+="&date="+P.date;
   if(P.timeMin) url+="&time_min="+encodeURIComponent(P.timeMin);
   if(P.timeMax) url+="&time_max="+encodeURIComponent(P.timeMax);
+  if(P.players) url+="&min_players="+encodeURIComponent(P.players);
   api(url).then(function(d){
     P.searchSlots=(d&&d.slots)?d.slots:[];P.loading=false;
     var dates={};P.searchSlots.forEach(function(s){if(s.date)dates[s.date]=1});
@@ -692,6 +722,13 @@ function setTab(t){
   else if(t==="search"){ P.date=P.date||nsat(); P.searchLimit=30; fetchSearch(); }
   else if(t==="alerts"){ fetchWebAlerts(); checkWebAlerts(); }
   else if(t==="snipe" && P.ct) fetchSnipes();
+}
+function setPlayers(n){
+  P.players=n;
+  if(P.tab==="wknd") fetchAll();
+  else if(P.tab==="search") fetchSearch();
+  else if(P.tab==="now" && !P.coursePick) fetchNow();
+  else R();
 }
 function pickCourse(v){
   P.coursePick=v;
@@ -772,7 +809,7 @@ function courseOptions(sel){
 }
 function filterSlots(slots){
   return slots.filter(function(s){
-    if(P.players && s.players_available && s.players_available<P.players) return false;
+    if(!slotHasPlayers(s,P.players)) return false;
     if(!timeInRange(s.time,P.timeMin,P.timeMax)) return false;
     return true;
   });
@@ -847,14 +884,14 @@ function dayHeader(date,count){
 function segmentedPlayers(){
   var h='<div class="segmented">';
   [1,2,3,4].forEach(function(n){
-    h+='<button class="'+(P.players===n?"active":"")+'" onclick="P.players='+n+';R()">'+n+(n===4?"":"p")+'</button>';
+    h+='<button class="'+(P.players===n?"active":"")+'" onclick="setPlayers('+n+')">'+n+(n===4?"":"p")+'</button>';
   });
   return h+'</div>';
 }
 function timeOptions(sel,endAt){
   var end=endAt||"19:00";
   var times=[];
-  for(var h=5;h<=18;h++){for(var m=0;m<60;m+=15){
+  for(var h=5;h<=19;h++){for(var m=0;m<60;m+=15){
     var t=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
     if(t>end) break;
     times.push(t);
@@ -949,8 +986,7 @@ function rNow(){
   h+=dayHeader(td,P.nowSlots.length);
   h+=weatherWarning(td);
   var filtered=P.nowSlots.filter(function(s){
-    if(P.players && s.players_available && s.players_available<P.players) return false;
-    return true;
+    return slotHasPlayers(s,P.players);
   });
   if(!filtered.length){
     h+=emptyState("🏌️","No tee times left today","Pick a course above to see the next 7 days, or check the All week tab.");

@@ -22,6 +22,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _today_chicago() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Chicago")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("America/Chicago")
+    return datetime.now(tz).date().strftime("%Y-%m-%d")
+
+
 def _normalize_action(action: str) -> str:
     return "CONFIRM" if action == "CONFIRMED" else "ALERT" if action == "ALERTED" else action
 
@@ -382,7 +392,8 @@ async def _handle_status(db, user, chat_id):
         "SELECT COUNT(*) as cnt FROM roll_calls WHERE status = 'PENDING'"
     )
     bookings = await db.execute_fetchone(
-        "SELECT COUNT(*) as cnt FROM bookings WHERE status = 'CONFIRMED' AND date >= date('now')"
+        "SELECT COUNT(*) as cnt FROM bookings WHERE status = 'CONFIRMED' AND date >= ?",
+        (_today_chicago(),),
     )
 
     from app.services.scanner import is_surge_mode

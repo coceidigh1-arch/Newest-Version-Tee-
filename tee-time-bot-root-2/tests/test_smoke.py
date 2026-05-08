@@ -156,6 +156,34 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 1)
         self.assertIsNotNone(row["disappeared_at"])
 
+    async def test_stale_slot_cleanup_uses_chicago_today(self):
+        """The cleanup job must not let the server's UTC date expire tomorrow's
+        Chicago tee times during the evening."""
+        from app.services.scheduler import mark_disappeared_slots
+
+        db = await get_db()
+        try:
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, last_seen_at) "
+                "VALUES ('old-today', 'bolingbrook', '2026-05-08', '14:00', datetime('now', '-2 hours'))"
+            )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, last_seen_at) "
+                "VALUES ('old-tomorrow', 'bolingbrook', '2026-05-09', '14:00', datetime('now', '-2 hours'))"
+            )
+            await db.commit()
+
+            with patch("app.services.scheduler._today_chicago", return_value="2026-05-08"):
+                await mark_disappeared_slots()
+
+            today_row = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = 'old-today'")
+            tomorrow_row = await db.execute_fetchone("SELECT disappeared_at FROM seen_slots WHERE id = 'old-tomorrow'")
+        finally:
+            await db.close()
+
+        self.assertIsNotNone(today_row["disappeared_at"])
+        self.assertIsNone(tomorrow_row["disappeared_at"])
+
     async def test_webhook_secret_validation(self):
         settings.TELEGRAM_WEBHOOK_SECRET = "secret123"
         try:
@@ -290,6 +318,43 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual([s["time"] for s in body["slots"]], ["12:30"])
 
+    async def test_slots_player_filter_applies_before_limit(self):
+        """Player count also needs to be handled by the API before LIMIT. Otherwise
+        a full page of one-player rows can hide later rows that fit a two-player search."""
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Chicago")
+        except Exception:
+            import pytz
+            tz = pytz.timezone("America/Chicago")
+        today = datetime.now(tz).date().strftime("%Y-%m-%d")
+
+        db = await get_db()
+        try:
+            for i in range(30):
+                await db.execute(
+                    "INSERT INTO seen_slots (id, course_id, date, time, players_available, price, booking_url) "
+                    "VALUES (?, 'bolingbrook', ?, '14:00', 1, 80, 'https://book/one-player')",
+                    (f"one-player-{i}", today),
+                )
+            await db.execute(
+                "INSERT INTO seen_slots (id, course_id, date, time, players_available, price, booking_url) "
+                "VALUES ('two-player-1', 'bolingbrook', ?, '14:30', 2, 90, 'https://book/two-player')",
+                (today,),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/slots?date="+today+"&time_min=14:00&time_max=17:00&min_players=2&limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([s["id"] for s in body["slots"]], ["two-player-1"])
+        self.assertEqual(body["slots"][0]["players_available"], 2)
+
     async def test_dashboard_page_renders(self):
         """Sanity check: /dashboard returns a complete HTML page with the key shell
         elements. Guards against the single-string template regressing in obvious ways."""
@@ -309,6 +374,8 @@ class TeeTimeBotSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--bg:#0a0d0c", body)
         self.assertIn("function rNow", body)
         self.assertIn("fetchCourseSlots", body)
+        self.assertIn("min_players", body)
+        self.assertIn("function setPlayers", body)
 
     async def test_dispatcher_returns_unsupported_for_unknown_platform(self):
         """Courses on a platform without a registered scraper must report

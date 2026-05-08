@@ -30,6 +30,16 @@ CONNECT_CODE_TTL_SECONDS = 300
 CONNECT_MAX_ATTEMPTS = 5
 
 
+def _today_chicago() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Chicago")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("America/Chicago")
+    return datetime.now(tz).date().strftime("%Y-%m-%d")
+
+
 def _hash_connect_code(chat_id: str, code: str) -> str:
     return hashlib.sha256(f"{chat_id}:{code}".encode("utf-8")).hexdigest()
 
@@ -349,6 +359,7 @@ async def list_slots(
     date: str | None = None,
     time_min: str | None = None,
     time_max: str | None = None,
+    min_players: int | None = Query(default=None, ge=1, le=8),
     min_score: int = 0,
     action: str | None = None,
     limit: int = Query(default=500, le=1000),
@@ -356,8 +367,8 @@ async def list_slots(
     """List discovered tee time slots with optional filters."""
     db = await get_db()
     try:
-        query = "SELECT * FROM seen_slots WHERE score >= ? AND disappeared_at IS NULL AND date >= date('now')"
-        params = [min_score]
+        query = "SELECT * FROM seen_slots WHERE score >= ? AND disappeared_at IS NULL AND date >= ?"
+        params = [min_score, _today_chicago()]
 
         if course_id:
             query += " AND course_id = ?"
@@ -371,6 +382,9 @@ async def list_slots(
         if time_max:
             query += " AND time <= ?"
             params.append(time_max)
+        if min_players:
+            query += " AND (players_available IS NULL OR players_available >= ?)"
+            params.append(min_players)
         if action:
             query += " AND action = ?"
             params.append(action)
@@ -1150,10 +1164,10 @@ async def check_web_alerts(session_id: str):
                 WHERE course_id = ?
                   AND time >= ? AND time <= ?
                   AND disappeared_at IS NULL
-                  AND date >= date('now')
+                  AND date >= ?
                   AND players_available >= ?
             """
-            params = [a["course_id"], a["earliest_time"], a["latest_time"], a["min_players"]]
+            params = [a["course_id"], a["earliest_time"], a["latest_time"], _today_chicago(), a["min_players"]]
 
             if a.get("date_from"):
                 query += " AND date >= ?"

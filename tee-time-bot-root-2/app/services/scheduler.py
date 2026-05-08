@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -12,6 +14,16 @@ from app.services.scanner import run_scan_cycle
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+
+def _today_chicago() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Chicago")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("America/Chicago")
+    return datetime.now(tz).date().strftime("%Y-%m-%d")
 
 
 def configure_scheduler() -> AsyncIOScheduler:
@@ -164,9 +176,9 @@ async def mark_disappeared_slots():
             """UPDATE seen_slots SET disappeared_at = datetime('now')
                WHERE disappeared_at IS NULL
                  AND last_seen_at < datetime('now', ?)
-                 AND date <= date('now')
+                 AND date <= ?
                  AND action NOT IN ('BOOKED', 'CONFIRMED')""",
-            (f"-{settings.SLOT_STALE_MINUTES} minutes",),
+            (f"-{settings.SLOT_STALE_MINUTES} minutes", _today_chicago()),
         )
         await db.commit()
     finally:
